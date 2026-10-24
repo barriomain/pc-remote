@@ -82,6 +82,13 @@
   dialog .note { color: var(--muted); font-size: 12px; line-height: 1.45; }
   dialog .note b { color: var(--text); }
   dialog hr { border: 0; border-top: 1px solid var(--line); margin: 14px 0; }
+  #histList { display: flex; flex-direction: column; gap: 6px; max-height: 60dvh; overflow-y: auto; }
+  #histList .empty { color: var(--muted); text-align: center; padding: 20px 0; }
+  .hi { display: flex; gap: 4px; align-items: stretch; }
+  .hi .t { flex: 1; min-width: 0; text-align: left; background: var(--key); border-radius: 8px; padding: 8px 10px;
+    white-space: pre-wrap; word-break: break-word; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .hi.pin .t { box-shadow: inset 3px 0 0 var(--amber); }
+  .hi button.s { width: 38px; flex: none; border-radius: 8px; background: var(--mod); font-size: 15px; }
   #toast { position: fixed; left: 50%; bottom: 40%; transform: translateX(-50%); background: #000d; padding: 10px 16px;
     border-radius: 10px; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 90vw; text-align: center; }
   #toast.show { opacity: 1; }
@@ -107,6 +114,7 @@
 
   <div class="textrow">
     <input id="txt" placeholder="Текст на русском или английском" autocomplete="off" enterkeyhint="send">
+    <button class="btn icon" id="histBtn" title="Буфер">📋</button>
     <button class="btn violet" id="lang">EN</button>
     <button class="btn blue" id="send">Send</button>
   </div>
@@ -124,10 +132,13 @@
   <label>Enter после отправки текста <input type="checkbox" id="sEnter"></label>
   <label>Задержка печати, мс <input type="range" id="sDelay" min="2" max="30" step="1"></label>
   <hr>
-  <b>Переключение раскладки на ПК</b>
+  <b>Ввод текста</b>
+  <label>Способ <select id="sTextMode"></select></label>
+  <p class="note"><b>Alt-коды</b> — работает сразу при любой раскладке ПК, настраивать Windows не нужно,
+    но печатает медленнее. <b>Хоткеи раскладки</b> — быстрее, но нужна настройка ниже.</p>
   <label>English <span><select id="sEnMods"></select> + <select id="sEnKey"></select></span></label>
   <label>Русский <span><select id="sRuMods"></select> + <select id="sRuKey"></select></span></label>
-  <p class="note">Чтобы текст всегда печатался правильно (без «ghbdtn»), ESP сама включает нужную раскладку
+  <p class="note">Для режима «Хоткеи раскладки» ESP сама включает нужную раскладку
     этими сочетаниями. Один раз настрой их в Windows:<br>
     <b>Параметры → Время и язык → Ввод → Дополнительные параметры клавиатуры → Сочетания клавиш для языков ввода</b>.
     Выбери «Включить English» → «Сменить сочетание клавиш» → включи и поставь <b>Ctrl+Shift</b> и <b>1</b>.
@@ -139,6 +150,17 @@
   <div class="bar" style="justify-content:flex-end;margin-top:12px">
     <button class="btn" id="releaseAll">Отпустить всё</button>
     <button class="btn blue" id="closeSettings">Готово</button>
+  </div>
+</dialog>
+<dialog id="hist">
+  <h3>Буфер</h3>
+  <div id="histList"></div>
+  <div class="bar" style="justify-content:space-between;margin-top:12px">
+    <button class="btn" id="histSave">+ Сохранить поле</button>
+    <span>
+      <button class="btn" id="histClear">Очистить</button>
+      <button class="btn blue" id="histClose">Закрыть</button>
+    </span>
   </div>
 </dialog>
 <div id="toast"></div>
@@ -155,7 +177,7 @@ const $ = s => document.querySelector(s);
 
 // ---------- Настройки ----------
 const DEFAULTS = { sens: 1.6, accel: 1, scroll: 1, natural: true, sendEnter: false, typeDelay: 6,
-  enMods: 3, enKey: 0x1E, ruMods: 3, ruKey: 0x1F, lang: 0, showKb: true };
+  enMods: 3, enKey: 0x1E, ruMods: 3, ruKey: 0x1F, lang: 0, showKb: true, textMode: 0 };
 let S = { ...DEFAULTS };
 try { Object.assign(S, JSON.parse(localStorage.getItem('pcremote') || '{}')); } catch (e) {}
 function save() { try { localStorage.setItem('pcremote', JSON.stringify(S)); } catch (e) {} }
@@ -247,7 +269,7 @@ async function setupGatt() {
   } catch (e) { console.warn('notify', e); }
   link.q = []; link.mx = link.my = link.wv = link.wh = 0;
   link.ch = ch;
-  link.cmd(C.CONFIG, S.enMods, S.enKey, S.ruMods, S.ruKey, S.typeDelay);
+  link.cmd(C.CONFIG, S.enMods, S.enKey, S.ruMods, S.ruKey, S.typeDelay, S.textMode);
   setStatus('on', link.dev.name || 'Подключено');
   vib(30);
   keepAwake();
@@ -327,8 +349,8 @@ function scrollBy(dx, dy) {
 
 pad.addEventListener('touchstart', e => {
   e.preventDefault();
-  const n = e.touches.length;
-  const [x, y] = avg(e.touches);
+  const n = e.targetTouches.length;
+  const [x, y] = avg(e.targetTouches);
   g.lx = x; g.ly = y;
   if (n === 1 && g.fingers === 0) {
     const now = performance.now();
@@ -358,8 +380,9 @@ pad.addEventListener('touchstart', e => {
 
 pad.addEventListener('touchmove', e => {
   e.preventDefault();
-  const n = e.touches.length;
-  const [x, y] = avg(e.touches);
+  const n = e.targetTouches.length;
+  if (!n) return;
+  const [x, y] = avg(e.targetTouches);
   const dx = x - g.lx, dy = y - g.ly;
   g.lx = x; g.ly = y;
   if (n !== g.fingers) { g.fingers = n; return; }  // число пальцев поменялось — без скачка
@@ -371,10 +394,10 @@ pad.addEventListener('touchmove', e => {
 
 function padEnd(e) {
   e.preventDefault();
-  const n = e.touches.length;
+  const n = e.targetTouches.length;
   if (n > 0) {
     g.fingers = n;
-    const [x, y] = avg(e.touches); g.lx = x; g.ly = y;
+    const [x, y] = avg(e.targetTouches); g.lx = x; g.ly = y;
     return;
   }
   clearTimeout(g.timer);
@@ -398,10 +421,10 @@ pad.addEventListener('touchcancel', padEnd, { passive: false });
 // Полоса прокрутки справа (одним пальцем)
 const sc = $('#scroll');
 let scY = 0;
-sc.addEventListener('touchstart', e => { e.preventDefault(); scY = e.touches[0].clientY; g.sAcc = 0; }, { passive: false });
+sc.addEventListener('touchstart', e => { e.preventDefault(); scY = e.targetTouches[0].clientY; g.sAcc = 0; }, { passive: false });
 sc.addEventListener('touchmove', e => {
   e.preventDefault();
-  const y = e.touches[0].clientY;
+  const y = e.targetTouches[0].clientY;
   scrollBy(0, (y - scY) * 1.5); scY = y;
 }, { passive: false });
 
@@ -578,10 +601,67 @@ function sendText() {
   const inp = $('#txt');
   let s = inp.value;
   if (!s) { link.cmd(C.KEY_DOWN, 0x28); link.cmd(C.KEY_UP, 0x28); return; }  // пусто — просто Enter
+  remember(s);
   if (S.sendEnter) s += '\n';
   link.text(s);
   inp.value = '';
 }
+
+// ---------- Буфер: всё отправленное сохраняется, можно ввести ещё раз ----------
+const HIST_MAX = 100;
+let hist = [];
+try { hist = JSON.parse(localStorage.getItem('pcremote_hist') || '[]'); } catch (e) {}
+function saveHist() { try { localStorage.setItem('pcremote_hist', JSON.stringify(hist)); } catch (e) {} }
+
+function remember(text) {
+  const old = hist.findIndex(h => h.t === text);
+  const pin = old >= 0 && hist[old].pin;
+  if (old >= 0) hist.splice(old, 1);
+  hist.unshift({ t: text, pin });
+  let unpinned = 0;
+  hist = hist.filter(h => h.pin || ++unpinned <= HIST_MAX);
+  saveHist();
+}
+
+function renderHist() {
+  const list = $('#histList');
+  list.innerHTML = '';
+  const items = [...hist.filter(h => h.pin), ...hist.filter(h => !h.pin)];
+  if (!items.length) { list.innerHTML = '<div class="empty">Пока пусто — отправленные тексты появятся здесь</div>'; return; }
+  for (const h of items) {
+    const row = document.createElement('div');
+    row.className = 'hi' + (h.pin ? ' pin' : '');
+    const t = document.createElement('button');
+    t.className = 't'; t.textContent = h.t; t.title = 'Ввести на ПК';
+    t.addEventListener('click', () => {
+      if (!link.ch) { toast('Сначала подключись'); return; }
+      link.text(S.sendEnter ? h.t + '\n' : h.t);
+      remember(h.t); vib(15);
+      $('#hist').close(); toast('Введено');
+    });
+    const mk = (icon, title, fn) => {
+      const b = document.createElement('button');
+      b.className = 's'; b.textContent = icon; b.title = title;
+      b.addEventListener('click', fn); return b;
+    };
+    row.append(t,
+      mk('✎', 'В поле ввода', () => { $('#txt').value = h.t; $('#hist').close(); $('#txt').focus(); }),
+      mk(h.pin ? '★' : '☆', 'Закрепить', () => { h.pin = !h.pin; saveHist(); renderHist(); }),
+      mk('✕', 'Удалить', () => { hist.splice(hist.indexOf(h), 1); saveHist(); renderHist(); }));
+    list.appendChild(row);
+  }
+}
+$('#histBtn').addEventListener('click', () => { renderHist(); $('#hist').showModal(); });
+$('#histClose').addEventListener('click', () => $('#hist').close());
+$('#histSave').addEventListener('click', () => {
+  const v = $('#txt').value;
+  if (!v) { toast('Поле ввода пустое'); return; }
+  remember(v); renderHist(); toast('Сохранено');
+});
+$('#histClear').addEventListener('click', () => {
+  if (!confirm('Удалить всё, кроме закреплённых (★)?')) return;
+  hist = hist.filter(h => h.pin); saveHist(); renderHist();
+});
 $('#send').addEventListener('click', sendText);
 $('#txt').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); sendText(); } });
 
@@ -589,7 +669,7 @@ function paintLang() { $('#lang').textContent = S.lang ? 'RU' : 'EN'; }
 $('#lang').addEventListener('click', () => {
   S.lang = S.lang ? 0 : 1; save(); paintLang(); renderKb();
   link.cmd(C.LAYOUT, S.lang);
-  toast(S.lang ? 'Раскладка ПК: Русский' : 'Раскладка ПК: English', 900);
+  toast(S.textMode ? (S.lang ? 'Раскладка ПК: Русский' : 'Раскладка ПК: English') : 'Alt+Shift — язык ПК переключён', 900);
 });
 
 // ---------- Панель / настройки ----------
@@ -609,10 +689,11 @@ function fillSelect(sel, opts, val) {
 const bindings = [
   ['#sSens', 'sens', 'range'], ['#sAccel', 'accel', 'range'], ['#sScroll', 'scroll', 'range'], ['#sDelay', 'typeDelay', 'range'],
   ['#sNatural', 'natural', 'check'], ['#sEnter', 'sendEnter', 'check'],
-  ['#sEnMods', 'enMods', 'select'], ['#sEnKey', 'enKey', 'select'], ['#sRuMods', 'ruMods', 'select'], ['#sRuKey', 'ruKey', 'select'],
+  ['#sTextMode', 'textMode', 'select'], ['#sEnMods', 'enMods', 'select'], ['#sEnKey', 'enKey', 'select'], ['#sRuMods', 'ruMods', 'select'], ['#sRuKey', 'ruKey', 'select'],
 ];
 $('#settingsBtn').addEventListener('click', () => {
   fillSelect($('#sEnMods'), MOD_OPTS, S.enMods); fillSelect($('#sRuMods'), MOD_OPTS, S.ruMods);
+  fillSelect($('#sTextMode'), [['Alt-коды', 0], ['Хоткеи раскладки', 1]], S.textMode);
   fillSelect($('#sEnKey'), KEY_OPTS, S.enKey); fillSelect($('#sRuKey'), KEY_OPTS, S.ruKey);
   for (const [sel, key, type] of bindings) {
     const el = $(sel);
@@ -627,7 +708,7 @@ $('#closeSettings').addEventListener('click', () => {
     S[key] = type === 'check' ? el.checked : +el.value;
   }
   save();
-  link.cmd(C.CONFIG, S.enMods, S.enKey, S.ruMods, S.ruKey, S.typeDelay);
+  link.cmd(C.CONFIG, S.enMods, S.enKey, S.ruMods, S.ruKey, S.typeDelay, S.textMode);
   dlg.close();
 });
 $('#releaseAll').addEventListener('click', () => {
