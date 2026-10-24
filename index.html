@@ -1,0 +1,646 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#14151a">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg">
+<title>PC Remote</title>
+<style>
+  :root {
+    --bg: #14151a; --panel: #1c1d24; --key: #2a2c35; --key-dn: #4b4f60; --mod: #3a3d4a;
+    --line: #3a3d48; --text: #e8e9ee; --muted: #8b8e9c;
+    --accent: #2f6df6; --violet: #7c3aed; --green: #16a34a; --red: #dc2626; --amber: #f59e0b;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 14px/1.3 system-ui, Roboto, sans-serif; overflow: hidden;
+    user-select: none; -webkit-user-select: none; }
+  button { font: inherit; color: inherit; border: 0; touch-action: manipulation; cursor: pointer; }
+  #app { height: 100dvh; display: flex; flex-direction: column; gap: 6px;
+    padding: max(6px, env(safe-area-inset-top)) 6px max(6px, env(safe-area-inset-bottom)); }
+
+  /* Верхняя панель */
+  .bar { display: flex; gap: 6px; align-items: center; }
+  .btn { height: 40px; padding: 0 12px; border-radius: 10px; background: var(--key); font-weight: 600; white-space: nowrap; }
+  .btn.blue { background: var(--accent); } .btn.violet { background: var(--violet); }
+  .btn.icon { width: 40px; padding: 0; font-size: 18px; }
+  #status { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--muted); overflow: hidden; }
+  #status i { width: 10px; height: 10px; border-radius: 50%; background: var(--red); flex: none; }
+  #status.on i { background: var(--green); } #status.wait i { background: var(--amber); }
+  #status span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* Тачпад */
+  .padwrap { flex: 1; min-height: 120px; display: flex; gap: 6px; }
+  #pad { flex: 1; position: relative; border: 1px dashed var(--line); border-radius: 14px; background: var(--panel);
+    touch-action: none; display: flex; align-items: center; justify-content: center; text-align: center;
+    color: var(--muted); padding: 16px; font-size: 13px; transition: border-color .15s; }
+  #pad.drag { border: 2px solid var(--accent); }
+  #pad.right { border: 2px solid var(--violet); }
+  #scroll { width: 34px; border-radius: 14px; background: var(--panel); border: 1px solid var(--line);
+    touch-action: none; display: flex; align-items: center; justify-content: center; color: var(--muted); writing-mode: vertical-rl; font-size: 11px; }
+  .mbtns { display: flex; gap: 6px; }
+  .mbtns button { flex: 1; height: 38px; border-radius: 10px; background: var(--key); color: var(--muted); font-weight: 600; touch-action: none; }
+  .mbtns button.mid { flex: .5; }
+  .mbtns button.dn { background: var(--key-dn); color: var(--text); }
+
+  /* Текст */
+  .textrow { display: flex; gap: 6px; }
+  #txt { flex: 1; min-width: 0; height: 42px; border-radius: 10px; border: 1px solid var(--line); background: #0d0e12;
+    color: var(--text); padding: 0 12px; font: inherit; font-size: 16px; user-select: text; -webkit-user-select: text; }
+
+  /* Быстрые комбинации */
+  #combos { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; flex: none; }
+  #combos::-webkit-scrollbar { display: none; }
+  #combos button { flex: none; height: 34px; padding: 0 10px; border-radius: 8px; background: var(--mod); font-size: 12px; font-weight: 600; }
+  #combos button:active { background: var(--key-dn); }
+
+  /* Клавиатура */
+  #kb { display: flex; flex-direction: column; gap: 5px; background: var(--panel); padding: 5px; border-radius: 12px; flex: none; }
+  #kb.hidden { display: none; }
+  .row { display: flex; gap: 4px; }
+  .k { flex: 1 1 0; min-width: 0; height: 44px; border-radius: 7px; background: var(--key); position: relative;
+    display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 500; touch-action: none; padding: 0; }
+  .k small { position: absolute; top: 2px; right: 4px; font-size: 9px; color: var(--muted); }
+  .k.sp { background: var(--mod); font-size: 12px; font-weight: 700; }
+  .k.enter { background: var(--green); }
+  .k.dn { background: var(--key-dn); }
+  .k.once { background: var(--accent); }
+  .k.lock { background: var(--violet); box-shadow: inset 0 -3px 0 #fff8; }
+  .k.led { box-shadow: inset 0 -3px 0 var(--green); }
+  @media (max-height: 700px) { .k { height: 38px; } .btn { height: 36px; } }
+
+  /* Настройки */
+  dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 14px;
+    width: min(440px, calc(100vw - 24px)); max-height: 90dvh; padding: 16px; }
+  dialog::backdrop { background: #000a; }
+  dialog h3 { margin: 0 0 12px; }
+  dialog label { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin: 10px 0; }
+  dialog input[type=range] { width: 50%; }
+  dialog select { background: var(--key); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 4px; }
+  dialog .note { color: var(--muted); font-size: 12px; line-height: 1.45; }
+  dialog .note b { color: var(--text); }
+  dialog hr { border: 0; border-top: 1px solid var(--line); margin: 14px 0; }
+  #toast { position: fixed; left: 50%; bottom: 40%; transform: translateX(-50%); background: #000d; padding: 10px 16px;
+    border-radius: 10px; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 90vw; text-align: center; }
+  #toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="bar">
+    <button class="btn blue" id="connect">Подключить</button>
+    <div id="status"><i></i><span>Не подключено</span></div>
+    <button class="btn icon" id="kbToggle" title="Клавиатура">⌨</button>
+    <button class="btn icon" id="settingsBtn" title="Настройки">⚙</button>
+    <button class="btn icon" id="fs" title="Во весь экран">⛶</button>
+  </div>
+
+  <div class="padwrap">
+    <div id="pad">1 палец — курсор · тап — клик · долгое нажатие — ПКМ<br>тап, потом сразу веди — зажатая ЛКМ (перетаскивание)<br>2 пальца — прокрутка · тап 2 пальцами — ПКМ · 3 пальца — СКМ</div>
+    <div id="scroll">прокрутка</div>
+  </div>
+  <div class="mbtns">
+    <button data-b="1">ЛКМ</button><button data-b="4" class="mid">СКМ</button><button data-b="2">ПКМ</button>
+  </div>
+
+  <div class="textrow">
+    <input id="txt" placeholder="Текст на русском или английском" autocomplete="off" enterkeyhint="send">
+    <button class="btn violet" id="lang">EN</button>
+    <button class="btn blue" id="send">Send</button>
+  </div>
+
+  <div id="combos"></div>
+  <div id="kb"></div>
+</div>
+
+<dialog id="settings">
+  <h3>Настройки</h3>
+  <label>Скорость курсора <input type="range" id="sSens" min="0.5" max="4" step="0.1"></label>
+  <label>Ускорение <input type="range" id="sAccel" min="0" max="3" step="0.1"></label>
+  <label>Скорость прокрутки <input type="range" id="sScroll" min="0.3" max="3" step="0.1"></label>
+  <label>Прокрутка как на телефоне <input type="checkbox" id="sNatural"></label>
+  <label>Enter после отправки текста <input type="checkbox" id="sEnter"></label>
+  <label>Задержка печати, мс <input type="range" id="sDelay" min="2" max="30" step="1"></label>
+  <hr>
+  <b>Переключение раскладки на ПК</b>
+  <label>English <span><select id="sEnMods"></select> + <select id="sEnKey"></select></span></label>
+  <label>Русский <span><select id="sRuMods"></select> + <select id="sRuKey"></select></span></label>
+  <p class="note">Чтобы текст всегда печатался правильно (без «ghbdtn»), ESP сама включает нужную раскладку
+    этими сочетаниями. Один раз настрой их в Windows:<br>
+    <b>Параметры → Время и язык → Ввод → Дополнительные параметры клавиатуры → Сочетания клавиш для языков ввода</b>.
+    Выбери «Включить English» → «Сменить сочетание клавиш» → включи и поставь <b>Ctrl+Shift</b> и <b>1</b>.
+    Для «Включить Русский» — <b>Ctrl+Shift</b> и <b>2</b>. (Или выбери здесь другие и поставь такие же в Windows.)</p>
+  <hr>
+  <p class="note">Модификаторы (Ctrl, Shift, Alt, Win): <b>тап</b> — нажат до следующей клавиши (синий),
+    <b>долгое нажатие</b> — зафиксирован (фиолетовый, тап чтобы отпустить), <b>двойной тап</b> — просто нажать
+    (например, Win откроет Пуск). Можно и держать пальцем, нажимая другие клавиши. Fn — F1–F12, Home/End, PgUp/PgDn.</p>
+  <div class="bar" style="justify-content:flex-end;margin-top:12px">
+    <button class="btn" id="releaseAll">Отпустить всё</button>
+    <button class="btn blue" id="closeSettings">Готово</button>
+  </div>
+</dialog>
+<div id="toast"></div>
+
+<script>
+'use strict';
+const SERVICE = '6e400001-b5a3-f393-e0a9-e50e24dc4179';
+const CMD_CHAR = '6e400002-b5a3-f393-e0a9-e50e24dc4179';
+const STATE_CHAR = '6e400003-b5a3-f393-e0a9-e50e24dc4179';
+const C = { MOVE: 1, BTN_DOWN: 2, BTN_UP: 3, WHEEL: 4, CLICK: 5, MEDIA: 6, KEY_DOWN: 0x10, KEY_UP: 0x11,
+  RELEASE_ALL: 0x12, TEXT: 0x20, TEXT_BEGIN: 0x21, CONFIG: 0x30, LAYOUT: 0x31 };
+const BTN = { L: 1, R: 2, M: 4 };
+const $ = s => document.querySelector(s);
+
+// ---------- Настройки ----------
+const DEFAULTS = { sens: 1.6, accel: 1, scroll: 1, natural: true, sendEnter: false, typeDelay: 6,
+  enMods: 3, enKey: 0x1E, ruMods: 3, ruKey: 0x1F, lang: 0, showKb: true };
+let S = { ...DEFAULTS };
+try { Object.assign(S, JSON.parse(localStorage.getItem('pcremote') || '{}')); } catch (e) {}
+function save() { try { localStorage.setItem('pcremote', JSON.stringify(S)); } catch (e) {} }
+
+function toast(msg, ms = 1800) {
+  const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), ms);
+}
+const vib = ms => navigator.vibrate && navigator.vibrate(ms);
+
+// ---------- Связь по BLE ----------
+// Мелкие команды склеиваются в пакеты по 20 байт (write without response — быстро),
+// движения мыши накапливаются, пока идёт предыдущая отправка. Текст идёт отдельными
+// пакетами с подтверждением.
+const link = {
+  dev: null, ch: null, q: [], mx: 0, my: 0, wv: 0, wh: 0, busy: false, textChunk: 120,
+  cmd(...bytes) { this.flushMove(); this.q.push(Uint8Array.from(bytes)); this.kick(); },
+  move(dx, dy) { this.mx += dx; this.my += dy; this.kick(); },
+  wheel(v, h) { this.wv += v; this.wh += h; this.kick(); },
+  text(s) {
+    this.cmd(C.TEXT_BEGIN);
+    this.q.push({ chars: [...s], pos: 0 });
+    this.kick();
+  },
+  flushMove() {
+    const clamp = v => Math.max(-127, Math.min(127, v));
+    while (this.mx || this.my) {
+      const x = clamp(this.mx), y = clamp(this.my);
+      this.q.push(Uint8Array.from([C.MOVE, x & 255, y & 255]));
+      this.mx -= x; this.my -= y;
+    }
+    while (this.wv || this.wh) {
+      const v = clamp(this.wv), h = clamp(this.wh);
+      this.q.push(Uint8Array.from([C.WHEEL, v & 255, h & 255]));
+      this.wv -= v; this.wh -= h;
+    }
+  },
+  async kick() {
+    if (this.busy || !this.ch) return;
+    this.busy = true;
+    const enc = new TextEncoder();
+    try {
+      while (this.ch) {
+        const head = this.q[0];
+        if (head && head.chars) {
+          let bytes = [], p = head.pos;
+          while (p < head.chars.length) {
+            const b = enc.encode(head.chars[p]);
+            if (bytes.length + b.length > this.textChunk) break;
+            bytes.push(...b); p++;
+          }
+          try {
+            await this.ch.writeValueWithResponse(Uint8Array.from([C.TEXT, bytes.length, ...bytes]));
+          } catch (e) {
+            if (this.textChunk > 18) { this.textChunk = 18; continue; }  // маленький MTU
+            throw e;
+          }
+          head.pos = p;
+          if (p >= head.chars.length) this.q.shift();
+          continue;
+        }
+        this.flushMove();
+        if (!this.q.length) break;
+        const out = [];
+        while (this.q.length && !this.q[0].chars && out.length + this.q[0].length <= 20) out.push(...this.q.shift());
+        await this.ch.writeValueWithoutResponse(Uint8Array.from(out));
+      }
+    } catch (e) {
+      console.warn('BLE write failed', e);
+    }
+    this.busy = false;
+  },
+};
+
+function setStatus(cls, text) {
+  const st = $('#status'); st.className = cls; st.querySelector('span').textContent = text;
+  $('#connect').textContent = cls === 'on' ? 'Отключить' : 'Подключить';
+}
+
+async function setupGatt() {
+  setStatus('wait', 'Подключение…');
+  const server = await link.dev.gatt.connect();
+  const svc = await server.getPrimaryService(SERVICE);
+  const ch = await svc.getCharacteristic(CMD_CHAR);
+  try {
+    const st = await svc.getCharacteristic(STATE_CHAR);
+    st.addEventListener('characteristicvaluechanged', e => setLeds(e.target.value.getUint8(0)));
+    await st.startNotifications();
+  } catch (e) { console.warn('notify', e); }
+  link.q = []; link.mx = link.my = link.wv = link.wh = 0;
+  link.ch = ch;
+  link.cmd(C.CONFIG, S.enMods, S.enKey, S.ruMods, S.ruKey, S.typeDelay);
+  setStatus('on', link.dev.name || 'Подключено');
+  vib(30);
+  keepAwake();
+}
+
+let manualDisconnect = false;
+async function connect() {
+  if (!navigator.bluetooth) {
+    alert('Этот браузер не поддерживает Bluetooth.\nAndroid: открой сайт в Chrome.\niPhone: используй браузер Bluefy (App Store).\nСайт должен быть открыт по https://');
+    return;
+  }
+  if (link.dev && link.dev.gatt.connected) {
+    manualDisconnect = true; link.dev.gatt.disconnect(); return;
+  }
+  try {
+    if (!link.dev) {
+      link.dev = await navigator.bluetooth.requestDevice({ filters: [{ services: [SERVICE] }] });
+      link.dev.addEventListener('gattserverdisconnected', onDisconnected);
+    }
+    manualDisconnect = false;
+    await setupGatt();
+  } catch (e) {
+    console.warn(e);
+    setStatus('', 'Не подключено');
+    if (e.name !== 'NotFoundError') toast('Ошибка: ' + e.message, 3000);
+  }
+}
+
+async function onDisconnected() {
+  link.ch = null; link.busy = false;
+  for (const m of Object.values(mods)) { m.st = 0; m.used = false; }  // ESP сама отпускает всё
+  paintMods();
+  if (manualDisconnect) { setStatus('', 'Отключено'); return; }
+  // Автопереподключение
+  for (let i = 0; i < 20 && !manualDisconnect; i++) {
+    setStatus('wait', 'Переподключение…');
+    try { await setupGatt(); return; } catch (e) { await new Promise(r => setTimeout(r, 1500)); }
+  }
+  setStatus('', 'Связь потеряна');
+}
+
+let wakeLock = null;
+async function keepAwake() {
+  try { if ('wakeLock' in navigator && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.onrelease = () => wakeLock = null; } } catch (e) {}
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && link.ch) keepAwake(); });
+
+// ---------- Тачпад ----------
+const pad = $('#pad');
+const TAP_MS = 250, DOUBLE_MS = 300, LONG_MS = 450, MOVE_TOL = 8;
+const g = { fingers: 0, max: 0, start: 0, sx: 0, sy: 0, lx: 0, ly: 0, moved: false, longFired: false,
+  dragging: false, timer: 0, lastTap: 0, lastTapX: 0, lastTapY: 0, rx: 0, ry: 0, sAcc: 0, hAcc: 0 };
+
+function avg(touches) {
+  let x = 0, y = 0;
+  for (const t of touches) { x += t.clientX; y += t.clientY; }
+  return [x / touches.length, y / touches.length];
+}
+
+function moveCursor(dx, dy) {
+  const speed = Math.min(Math.hypot(dx, dy), 40);
+  const f = S.sens * (1 + S.accel * speed / 20);
+  g.rx += dx * f; g.ry += dy * f;
+  const ix = Math.trunc(g.rx), iy = Math.trunc(g.ry);
+  g.rx -= ix; g.ry -= iy;
+  if (ix || iy) link.move(ix, iy);
+}
+
+function scrollBy(dx, dy) {
+  const step = 28 / S.scroll, dir = S.natural ? 1 : -1;
+  if (Math.abs(dy) >= Math.abs(dx)) g.sAcc += dy; else g.hAcc += dx;
+  const v = Math.trunc(g.sAcc / step), h = Math.trunc(g.hAcc / step);
+  if (v) { g.sAcc -= v * step; }
+  if (h) { g.hAcc -= h * step; }
+  if (v || h) link.wheel(v * dir, -h * dir);
+}
+
+pad.addEventListener('touchstart', e => {
+  e.preventDefault();
+  const n = e.touches.length;
+  const [x, y] = avg(e.touches);
+  g.lx = x; g.ly = y;
+  if (n === 1 && g.fingers === 0) {
+    const now = performance.now();
+    g.start = now; g.sx = x; g.sy = y; g.moved = false; g.longFired = false; g.max = 1;
+    if (now - g.lastTap < DOUBLE_MS && Math.hypot(x - g.lastTapX, y - g.lastTapY) < 60) {
+      // тап + сразу касание = зажать ЛКМ (перетаскивание / выделение)
+      g.dragging = true; g.lastTap = 0;
+      link.cmd(C.BTN_DOWN, BTN.L);
+      pad.classList.add('drag'); vib(15);
+    } else {
+      g.timer = setTimeout(() => {
+        if (!g.moved && g.fingers === 1 && !g.dragging) {
+          g.longFired = true;
+          link.cmd(C.CLICK, BTN.R);
+          pad.classList.add('right'); setTimeout(() => pad.classList.remove('right'), 250);
+          vib(40);
+        }
+      }, LONG_MS);
+    }
+  } else {
+    clearTimeout(g.timer);
+    g.max = Math.max(g.max, n);
+    g.sx = x; g.sy = y;
+  }
+  g.fingers = n;
+}, { passive: false });
+
+pad.addEventListener('touchmove', e => {
+  e.preventDefault();
+  const n = e.touches.length;
+  const [x, y] = avg(e.touches);
+  const dx = x - g.lx, dy = y - g.ly;
+  g.lx = x; g.ly = y;
+  if (n !== g.fingers) { g.fingers = n; return; }  // число пальцев поменялось — без скачка
+  if (!g.moved && Math.hypot(x - g.sx, y - g.sy) > MOVE_TOL) { g.moved = true; clearTimeout(g.timer); }
+  if (!g.moved) return;
+  if (n === 1) moveCursor(dx, dy);
+  else if (n === 2) scrollBy(dx, dy);
+}, { passive: false });
+
+function padEnd(e) {
+  e.preventDefault();
+  const n = e.touches.length;
+  if (n > 0) {
+    g.fingers = n;
+    const [x, y] = avg(e.touches); g.lx = x; g.ly = y;
+    return;
+  }
+  clearTimeout(g.timer);
+  const now = performance.now(), quick = now - g.start < TAP_MS + 100;
+  if (g.dragging) {
+    link.cmd(C.BTN_UP, BTN.L);
+    g.dragging = false;
+    pad.classList.remove('drag');
+  } else if (!g.moved && !g.longFired && quick) {
+    if (g.max === 1) {
+      link.cmd(C.CLICK, BTN.L);
+      g.lastTap = now; g.lastTapX = g.lx; g.lastTapY = g.ly;
+    } else if (g.max === 2) link.cmd(C.CLICK, BTN.R);
+    else if (g.max === 3) link.cmd(C.CLICK, BTN.M);
+  }
+  g.fingers = 0; g.sAcc = g.hAcc = 0;
+}
+pad.addEventListener('touchend', padEnd, { passive: false });
+pad.addEventListener('touchcancel', padEnd, { passive: false });
+
+// Полоса прокрутки справа (одним пальцем)
+const sc = $('#scroll');
+let scY = 0;
+sc.addEventListener('touchstart', e => { e.preventDefault(); scY = e.touches[0].clientY; g.sAcc = 0; }, { passive: false });
+sc.addEventListener('touchmove', e => {
+  e.preventDefault();
+  const y = e.touches[0].clientY;
+  scrollBy(0, (y - scY) * 1.5); scY = y;
+}, { passive: false });
+
+// Кнопки мыши (можно держать)
+document.querySelectorAll('.mbtns button').forEach(b => {
+  const m = +b.dataset.b;
+  b.addEventListener('pointerdown', e => { b.setPointerCapture(e.pointerId); b.classList.add('dn'); link.cmd(C.BTN_DOWN, m); vib(10); });
+  const up = () => { if (!b.classList.contains('dn')) return; b.classList.remove('dn'); link.cmd(C.BTN_UP, m); };
+  b.addEventListener('pointerup', up); b.addEventListener('pointercancel', up);
+});
+
+// ---------- Клавиатура ----------
+function charCode(c) {
+  if (c >= 'a' && c <= 'z') return 4 + c.charCodeAt(0) - 97;
+  if (c >= '1' && c <= '9') return 0x1E + (+c) - 1;
+  if (c === '0') return 0x27;
+  return { '-': 0x2D, '=': 0x2E, '[': 0x2F, ']': 0x30, '\\': 0x31, ';': 0x33, "'": 0x34, '`': 0x35, ',': 0x36, '.': 0x37, '/': 0x38 }[c];
+}
+const RU_LABEL = {};
+{
+  const k = "f,dult;pbqrkvyjghcnea[wxio]sm'.z", r = 'абвгдежзийклмнопрстуфхцчшщъыьэюя';
+  for (let i = 0; i < k.length; i++) RU_LABEL[k[i]] = r[i];
+  RU_LABEL['`'] = 'ё'; RU_LABEL['/'] = '.';
+}
+const K = (l, c, o = {}) => ({ l, c, w: 1, ...o });
+const ch = s => [...s].map(c => K(c, charCode(c), { ch: c }));
+const F = n => 0x3A + n - 1;  // F1..F12
+const ROWS = [
+  [...ch('`1234567890-=').map((k, i) => i ? { ...k, fl: 'F' + i, fc: F(i) } : k), K('⌫', 0x2A, { w: 1.5, sp: 1 })],
+  [K('Tab', 0x2B, { w: 1.4, sp: 1 }), ...ch('qwertyuiop[]\\')],
+  [K('Caps', 0x39, { w: 1.6, sp: 1, id: 'caps' }), ...ch("asdfghjkl;'"), K('Enter', 0x28, { w: 1.9, sp: 1, cls: 'enter' })],
+  [K('Shift', 0xE1, { w: 1.9, sp: 1, mod: 1 }), ...ch('zxcvbnm,./'), K('↑', 0x52, { sp: 1, fl: 'PgUp', fc: 0x4B }), K('Del', 0x4C, { w: 1.2, sp: 1, fl: 'Ins', fc: 0x49 })],
+  [K('Ctrl', 0xE0, { w: 1.3, sp: 1, mod: 1 }), K('Win', 0xE3, { w: 1.3, sp: 1, mod: 1 }), K('Alt', 0xE2, { w: 1.3, sp: 1, mod: 1 }),
+   K('Fn', 0, { w: 1.1, sp: 1, fn: 1 }), K('Space', 0x2C, { w: 3.6, sp: 1 }), K('Esc', 0x29, { w: 1.2, sp: 1, fl: 'PrtSc', fc: 0x46 }),
+   K('←', 0x50, { sp: 1, fl: 'Home', fc: 0x4A }), K('↓', 0x51, { sp: 1, fl: 'PgDn', fc: 0x4E }), K('→', 0x4F, { sp: 1, fl: 'End', fc: 0x4D })],
+];
+
+let fnOn = false;
+const mods = {};  // code -> { st: 0 выкл / 1 до след. клавиши / 2 зафиксирован, used, held, fresh, el }
+const kb = $('#kb');
+
+function label(k) {
+  if (fnOn && k.fl) return { main: k.fl, sub: '' };
+  if (k.ch) {
+    const ru = RU_LABEL[k.ch];
+    if (!ru) return { main: k.ch, sub: '' };
+    return S.lang ? { main: ru, sub: k.ch } : { main: k.ch, sub: ru };
+  }
+  return { main: k.l, sub: '' };
+}
+
+function renderKb() {
+  kb.innerHTML = '';
+  for (const row of ROWS) {
+    const r = document.createElement('div'); r.className = 'row';
+    for (const k of row) {
+      const b = document.createElement('button');
+      b.className = 'k' + (k.sp ? ' sp' : '') + (k.cls ? ' ' + k.cls : '');
+      b.style.flexGrow = k.w;
+      const { main, sub } = label(k);
+      b.textContent = main;
+      if (sub) { const s = document.createElement('small'); s.textContent = sub; b.appendChild(s); }
+      if (k.id) b.id = k.id;
+      if (k.fn && fnOn) b.classList.add('lock');
+      if (k.mod) { mods[k.c] = mods[k.c] || { st: 0 }; mods[k.c].el = b; }
+      bindKey(b, k);
+      r.appendChild(b);
+    }
+    kb.appendChild(r);
+  }
+  paintMods(); setLeds(leds);
+  kb.classList.toggle('hidden', !S.showKb);
+}
+
+function paintMods() {
+  for (const m of Object.values(mods)) {
+    if (!m.el) continue;
+    m.el.classList.toggle('once', m.st === 1);
+    m.el.classList.toggle('lock', m.st === 2);
+  }
+}
+
+function releaseMod(code) {
+  const m = mods[code];
+  if (m.st) link.cmd(C.KEY_UP, code);
+  m.st = 0; m.used = false;
+}
+
+// Обычная клавиша нажата — "одноразовые" модификаторы отпускаются
+function afterKey() {
+  for (const [code, m] of Object.entries(mods)) {
+    if (m.st === 1) { if (m.held) m.used = true; else releaseMod(+code); }
+  }
+  paintMods();
+}
+
+function bindKey(b, k) {
+  let downCode = 0;
+  b.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    b.setPointerCapture(e.pointerId);
+    vib(8);
+    if (k.fn) { fnOn = !fnOn; renderKb(); return; }
+    if (k.mod) {
+      const m = mods[k.c];
+      m.held = true; m.fresh = false;
+      if (m.st === 0) {
+        link.cmd(C.KEY_DOWN, k.c);
+        m.st = 1; m.used = false; m.fresh = true;
+        clearTimeout(m.timer);
+        m.timer = setTimeout(() => { if (m.held && !m.used) { m.st = 2; vib(30); paintMods(); } }, 450);
+      }
+      paintMods();
+      return;
+    }
+    downCode = (fnOn && k.fc) ? k.fc : k.c;
+    b.classList.add('dn');
+    link.cmd(C.KEY_DOWN, downCode);
+  });
+  const up = () => {
+    if (k.fn) return;
+    if (k.mod) {
+      const m = mods[k.c];
+      if (!m.held) return;
+      m.held = false; clearTimeout(m.timer);
+      if (m.st === 2 && !m.fresh) releaseMod(k.c);      // тап по зафиксированному — отпустить
+      else if (m.st === 1 && (m.used || !m.fresh)) releaseMod(k.c);  // держали в комбинации / двойной тап
+      paintMods();
+      return;
+    }
+    if (!downCode) return;
+    b.classList.remove('dn');
+    link.cmd(C.KEY_UP, downCode);
+    downCode = 0;
+    afterKey();
+  };
+  b.addEventListener('pointerup', up);
+  b.addEventListener('pointercancel', up);
+}
+
+let leds = 0;
+function setLeds(v) {
+  leds = v;
+  const caps = $('#caps');
+  if (caps) caps.classList.toggle('led', !!(v & 2));
+}
+
+// ---------- Быстрые комбинации ----------
+const COMBOS = [
+  ['Ctrl+C', [0xE0, 0x06]], ['Ctrl+V', [0xE0, 0x19]], ['Ctrl+X', [0xE0, 0x1B]], ['Ctrl+Z', [0xE0, 0x1D]],
+  ['Ctrl+Y', [0xE0, 0x1C]], ['Ctrl+A', [0xE0, 0x04]], ['Ctrl+S', [0xE0, 0x16]], ['Ctrl+F', [0xE0, 0x09]],
+  ['Alt+Tab', [0xE2, 0x2B]], ['Win+D', [0xE3, 0x07]], ['Win+E', [0xE3, 0x08]], ['Alt+F4', [0xE2, 0x3D]],
+  ['Ctrl+W', [0xE0, 0x1A]], ['Ctrl+T', [0xE0, 0x17]], ['Ctrl+Shift+T', [0xE0, 0xE1, 0x17]],
+  ['Скрин', [0xE3, 0xE1, 0x16]], ['Win+L', [0xE3, 0x0F]], ['Диспетчер', [0xE0, 0xE1, 0x29]],
+  ['Ctrl+Alt+Del', [0xE0, 0xE2, 0x4C]],
+  ['🔉', null, 0xEA], ['🔊', null, 0xE9], ['🔇', null, 0xE2], ['⏯', null, 0xCD], ['⏮', null, 0xB6], ['⏭', null, 0xB5],
+];
+const combos = $('#combos');
+for (const [name, codes, media] of COMBOS) {
+  const b = document.createElement('button');
+  b.textContent = name;
+  b.addEventListener('click', () => {
+    vib(10);
+    if (media) { link.cmd(C.MEDIA, media & 255, media >> 8); return; }
+    for (const c of codes) link.cmd(C.KEY_DOWN, c);
+    for (const c of [...codes].reverse()) link.cmd(C.KEY_UP, c);
+    afterKey();
+  });
+  combos.appendChild(b);
+}
+
+// ---------- Текст ----------
+function sendText() {
+  const inp = $('#txt');
+  let s = inp.value;
+  if (!s) { link.cmd(C.KEY_DOWN, 0x28); link.cmd(C.KEY_UP, 0x28); return; }  // пусто — просто Enter
+  if (S.sendEnter) s += '\n';
+  link.text(s);
+  inp.value = '';
+}
+$('#send').addEventListener('click', sendText);
+$('#txt').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); sendText(); } });
+
+function paintLang() { $('#lang').textContent = S.lang ? 'RU' : 'EN'; }
+$('#lang').addEventListener('click', () => {
+  S.lang = S.lang ? 0 : 1; save(); paintLang(); renderKb();
+  link.cmd(C.LAYOUT, S.lang);
+  toast(S.lang ? 'Раскладка ПК: Русский' : 'Раскладка ПК: English', 900);
+});
+
+// ---------- Панель / настройки ----------
+$('#connect').addEventListener('click', connect);
+$('#kbToggle').addEventListener('click', () => { S.showKb = !S.showKb; save(); kb.classList.toggle('hidden', !S.showKb); });
+$('#fs').addEventListener('click', () => {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else document.documentElement.requestFullscreen?.().catch(() => {});
+});
+
+const dlg = $('#settings');
+const MOD_OPTS = [['Ctrl+Shift', 0x03], ['LAlt+Shift', 0x06]];
+const KEY_OPTS = [...'1234567890'].map(d => [d, charCode(d)]);
+function fillSelect(sel, opts, val) {
+  sel.innerHTML = opts.map(([l, v]) => `<option value="${v}"${v === val ? ' selected' : ''}>${l}</option>`).join('');
+}
+const bindings = [
+  ['#sSens', 'sens', 'range'], ['#sAccel', 'accel', 'range'], ['#sScroll', 'scroll', 'range'], ['#sDelay', 'typeDelay', 'range'],
+  ['#sNatural', 'natural', 'check'], ['#sEnter', 'sendEnter', 'check'],
+  ['#sEnMods', 'enMods', 'select'], ['#sEnKey', 'enKey', 'select'], ['#sRuMods', 'ruMods', 'select'], ['#sRuKey', 'ruKey', 'select'],
+];
+$('#settingsBtn').addEventListener('click', () => {
+  fillSelect($('#sEnMods'), MOD_OPTS, S.enMods); fillSelect($('#sRuMods'), MOD_OPTS, S.ruMods);
+  fillSelect($('#sEnKey'), KEY_OPTS, S.enKey); fillSelect($('#sRuKey'), KEY_OPTS, S.ruKey);
+  for (const [sel, key, type] of bindings) {
+    const el = $(sel);
+    if (type === 'range') el.value = S[key];
+    if (type === 'check') el.checked = S[key];
+  }
+  dlg.showModal();
+});
+$('#closeSettings').addEventListener('click', () => {
+  for (const [sel, key, type] of bindings) {
+    const el = $(sel);
+    S[key] = type === 'check' ? el.checked : +el.value;
+  }
+  save();
+  link.cmd(C.CONFIG, S.enMods, S.enKey, S.ruMods, S.ruKey, S.typeDelay);
+  dlg.close();
+});
+$('#releaseAll').addEventListener('click', () => {
+  for (const m of Object.values(mods)) { m.st = 0; m.used = false; }
+  paintMods();
+  link.cmd(C.RELEASE_ALL);
+  toast('Все клавиши отпущены');
+});
+
+paintLang();
+renderKb();
+if (!navigator.bluetooth) setStatus('', 'Нет Bluetooth в браузере');
+if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+</script>
+</body>
+</html>
