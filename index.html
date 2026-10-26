@@ -287,8 +287,20 @@ function setStatus(cls, text) {
 // ---------- Диагностика обрывов ----------
 const RESET_REASONS = { 1: 'включение питания', 3: 'программный сброс', 4: 'сбой прошивки (crash)', 5: 'зависание (watchdog)',
   6: 'зависание задачи (watchdog)', 7: 'зависание (watchdog)', 9: 'просадка питания (brownout)', 8: 'выход из сна' };
-const DISC_REASONS = { 0x08: 'пропал сигнал (таймаут)', 0x13: 'телефон разорвал связь', 0x16: 'ESP разорвала связь',
+const DISC_REASONS = { 0x05: 'ошибка pairing', 0x06: 'телефон помнит старое сопряжение (ключ не найден)',
+  0x08: 'пропал сигнал (таймаут)', 0x13: 'телефон разорвал связь', 0x16: 'ESP разорвала связь', 0x3D: 'ошибка шифрования',
   0x22: 'таймаут протокола', 0x3B: 'неподходящие параметры связи', 0x3E: 'не удалось установить связь' };
+// NimBLE присылает 0x200 + код HCI
+function discText(r) {
+  const hci = r >= 0x200 && r < 0x300 ? r - 0x200 : null;
+  if (hci === null) return 'код NimBLE ' + r;
+  return (DISC_REASONS[hci] || 'код HCI 0x' + hci.toString(16)) + ` (0x${hci.toString(16)})`;
+}
+function secText(bits, fail) {
+  if (!bits) return 'не было';
+  const names = [[1, 'шифрование вкл'], [2, 'ошибка шифрования'], [4, 'запрос PIN'], [8, 'повторный pairing'], [16, 'pairing']];
+  return names.filter(([b]) => bits & b).map(([, n]) => n).join(', ') + (fail ? `, код ${fail}` : '');
+}
 const diag = { espUptime: null, resetReason: 0, discReason: 0, discCount: 0, reconnects: 0, log: [] };
 
 function onState(v) {
@@ -314,7 +326,7 @@ function onState(v) {
     const rebooted = prevUptime !== null && diag.espUptime < 30 && diag.espUptime < prevUptime;
     const why = rebooted
       ? 'ESP перезагрузилась: ' + (RESET_REASONS[diag.resetReason] || 'код ' + diag.resetReason)
-      : 'Обрыв связи: ' + (DISC_REASONS[diag.discReason] || 'код 0x' + diag.discReason.toString(16))
+      : 'Обрыв связи: ' + discText(diag.discReason)
         + (diag.lastConnMs !== undefined ? ` через ${(diag.lastConnMs / 1000).toFixed(1)} с` : '');
     diag.log.unshift(new Date().toLocaleTimeString() + ' — ' + why);
     diag.log.length = Math.min(diag.log.length, 20);
@@ -330,7 +342,8 @@ function diagText() {
     lines.push(`Обрывов с момента запуска ESP: ${diag.discCount}, переподключений сайта: ${diag.reconnects}`);
     if (diag.interval !== undefined) {
       lines.push(`Связь: интервал ${diag.interval} мс, задержка ${diag.latency}, таймаут ${diag.timeout} мс, `
-        + `статус ${diag.updStatus === 255 ? 'нет' : diag.updStatus}, безопасность ${diag.secEvents}/${diag.authFail}`);
+        + `обновление ${diag.updStatus === 255 ? 'не было' : diag.updStatus}`);
+      lines.push(`Безопасность в прошлом соединении: ${secText(diag.secEvents, diag.authFail)}`);
     }
   } else lines.push('Нет данных — подключись к ESP');
   return lines.concat(diag.log).join('\n');
