@@ -53,7 +53,7 @@
   /* Быстрые комбинации */
   #combos { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; flex: none; }
   #combos::-webkit-scrollbar { display: none; }
-  #combos button { flex: none; height: 34px; padding: 0 10px; border-radius: 8px; background: var(--mod); font-size: 12px; font-weight: 600; }
+  #combos button { flex: 1 0 auto; height: 34px; padding: 0 10px; border-radius: 8px; background: var(--mod); font-size: 12px; font-weight: 600; }
   #combos button:active { background: var(--key-dn); }
 
   /* Клавиатура */
@@ -299,12 +299,23 @@ function onState(v) {
   diag.discReason = v.getUint8(2);
   diag.discCount = v.getUint16(3, true);
   diag.espUptime = v.getUint32(5, true);
+  if (v.byteLength >= 24) {
+    diag.discReason = v.getUint16(9, true);
+    diag.lastConnMs = v.getUint32(11, true);
+    diag.interval = v.getUint16(15, true) * 1.25;
+    diag.latency = v.getUint16(17, true);
+    diag.timeout = v.getUint16(19, true) * 10;
+    diag.updStatus = v.getUint8(21);
+    diag.secEvents = v.getUint8(22);
+    diag.authFail = v.getUint8(23);
+  }
   if (diag.pendingReconnect) {
     diag.pendingReconnect = false;
     const rebooted = prevUptime !== null && diag.espUptime < 30 && diag.espUptime < prevUptime;
     const why = rebooted
       ? 'ESP перезагрузилась: ' + (RESET_REASONS[diag.resetReason] || 'код ' + diag.resetReason)
-      : 'Обрыв связи: ' + (DISC_REASONS[diag.discReason] || 'код 0x' + diag.discReason.toString(16));
+      : 'Обрыв связи: ' + (DISC_REASONS[diag.discReason] || 'код 0x' + diag.discReason.toString(16))
+        + (diag.lastConnMs !== undefined ? ` через ${(diag.lastConnMs / 1000).toFixed(1)} с` : '');
     diag.log.unshift(new Date().toLocaleTimeString() + ' — ' + why);
     diag.log.length = Math.min(diag.log.length, 20);
     toast('Переподключено. ' + why, 3500);
@@ -317,6 +328,10 @@ function diagText() {
     const m = Math.floor(diag.espUptime / 60);
     lines.push(`ESP работает ${m} мин ${diag.espUptime % 60} с, последний запуск: ${RESET_REASONS[diag.resetReason] || diag.resetReason}`);
     lines.push(`Обрывов с момента запуска ESP: ${diag.discCount}, переподключений сайта: ${diag.reconnects}`);
+    if (diag.interval !== undefined) {
+      lines.push(`Связь: интервал ${diag.interval} мс, задержка ${diag.latency}, таймаут ${diag.timeout} мс, `
+        + `статус ${diag.updStatus === 255 ? 'нет' : diag.updStatus}, безопасность ${diag.secEvents}/${diag.authFail}`);
+    }
   } else lines.push('Нет данных — подключись к ESP');
   return lines.concat(diag.log).join('\n');
 }
@@ -639,13 +654,8 @@ function setLeds(v) {
 
 // ---------- Быстрые комбинации ----------
 const COMBOS = [
-  ['Ctrl+C', [0xE0, 0x06]], ['Ctrl+V', [0xE0, 0x19]], ['Ctrl+X', [0xE0, 0x1B]], ['Ctrl+Z', [0xE0, 0x1D]],
-  ['Ctrl+Y', [0xE0, 0x1C]], ['Ctrl+A', [0xE0, 0x04]], ['Ctrl+S', [0xE0, 0x16]], ['Ctrl+F', [0xE0, 0x09]],
-  ['Alt+Tab', [0xE2, 0x2B]], ['Win+D', [0xE3, 0x07]], ['Win+E', [0xE3, 0x08]], ['Alt+F4', [0xE2, 0x3D]],
-  ['Ctrl+W', [0xE0, 0x1A]], ['Ctrl+T', [0xE0, 0x17]], ['Ctrl+Shift+T', [0xE0, 0xE1, 0x17]],
-  ['Скрин', [0xE3, 0xE1, 0x16]], ['Win+L', [0xE3, 0x0F]], ['Диспетчер', [0xE0, 0xE1, 0x29]],
-  ['Ctrl+Alt+Del', [0xE0, 0xE2, 0x4C]],
-  ['🔉', null, 0xEA], ['🔊', null, 0xE9], ['🔇', null, 0xE2], ['⏯', null, 0xCD], ['⏮', null, 0xB6], ['⏭', null, 0xB5],
+  ['Ctrl+C', [0xE0, 0x06]], ['Ctrl+V', [0xE0, 0x19]],
+  ['⏮', null, 0xB6], ['⏯', null, 0xCD], ['⏭', null, 0xB5], ['🔉 −', null, 0xEA], ['🔊 +', null, 0xE9],
 ];
 const combos = $('#combos');
 for (const [name, codes, media] of COMBOS) {
