@@ -89,6 +89,13 @@
     white-space: pre-wrap; word-break: break-word; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
   .hi.pin .t { box-shadow: inset 3px 0 0 var(--amber); }
   .hi button.s { width: 38px; flex: none; border-radius: 8px; background: var(--mod); font-size: 15px; }
+  #ledModes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 10px; }
+  #ledModes button { height: 40px; border-radius: 8px; background: var(--key); font-size: 12px; font-weight: 600; }
+  #ledModes button.on { background: var(--accent); }
+  #ledColors { display: flex; gap: 8px; flex-wrap: wrap; }
+  #ledColors button { width: 34px; height: 34px; border-radius: 50%; border: 2px solid var(--line); }
+  #ledColors button.on { border-color: #fff; }
+  input[type=color] { width: 54px; height: 34px; border: 0; padding: 0; background: none; }
   #toast { position: fixed; left: 50%; bottom: 40%; transform: translateX(-50%); background: #000d; padding: 10px 16px;
     border-radius: 10px; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 90vw; text-align: center; }
   #toast.show { opacity: 1; }
@@ -100,6 +107,7 @@
     <button class="btn blue" id="connect">Подключить</button>
     <div id="status"><i></i><span>Не подключено</span></div>
     <button class="btn icon" id="kbToggle" title="Клавиатура">⌨</button>
+    <button class="btn icon" id="ledBtn" title="Подсветка">💡</button>
     <button class="btn icon" id="settingsBtn" title="Настройки">⚙</button>
     <button class="btn icon" id="fs" title="Во весь экран">⛶</button>
   </div>
@@ -152,6 +160,20 @@
     <button class="btn blue" id="closeSettings">Готово</button>
   </div>
 </dialog>
+<dialog id="ledDlg">
+  <h3>Подсветка ESP</h3>
+  <div id="ledModes"></div>
+  <div id="ledColors"></div>
+  <label>Свой цвет <input type="color" id="ledColor"></label>
+  <label>Яркость <input type="range" id="ledBright" min="0" max="255" step="1"></label>
+  <label>Скорость <input type="range" id="ledSpeed" min="10" max="255" step="1"></label>
+  <label>Вспышка при нажатиях <input type="checkbox" id="ledFlash"></label>
+  <p class="note"><b>Статус</b>: мигает синим — ждёт телефон, зелёный — подключено.
+    Цвет используют режимы «Цвет», «Дыхание», «Мигание», «Огонь».</p>
+  <div class="bar" style="justify-content:flex-end;margin-top:12px">
+    <button class="btn blue" id="ledClose">Готово</button>
+  </div>
+</dialog>
 <dialog id="hist">
   <h3>Буфер</h3>
   <div id="histList"></div>
@@ -171,15 +193,17 @@ const SERVICE = '6e400001-b5a3-f393-e0a9-e50e24dc4179';
 const CMD_CHAR = '6e400002-b5a3-f393-e0a9-e50e24dc4179';
 const STATE_CHAR = '6e400003-b5a3-f393-e0a9-e50e24dc4179';
 const C = { MOVE: 1, BTN_DOWN: 2, BTN_UP: 3, WHEEL: 4, CLICK: 5, MEDIA: 6, KEY_DOWN: 0x10, KEY_UP: 0x11,
-  RELEASE_ALL: 0x12, TEXT: 0x20, TEXT_BEGIN: 0x21, CONFIG: 0x30, LAYOUT: 0x31 };
+  RELEASE_ALL: 0x12, TEXT: 0x20, TEXT_BEGIN: 0x21, CONFIG: 0x30, LAYOUT: 0x31, LED: 0x40 };
 const BTN = { L: 1, R: 2, M: 4 };
 const $ = s => document.querySelector(s);
 
 // ---------- Настройки ----------
 const DEFAULTS = { sens: 1.6, accel: 1, scroll: 1, natural: true, sendEnter: false, typeDelay: 6,
-  enMods: 3, enKey: 0x1E, ruMods: 3, ruKey: 0x1F, lang: 0, showKb: true, textMode: 0 };
+  enMods: 3, enKey: 0x1E, ruMods: 3, ruKey: 0x1F, lang: 0, showKb: true, textMode: 0,
+  led: { mode: 1, color: '#0078ff', bright: 60, speed: 128, flash: true } };
 let S = { ...DEFAULTS };
 try { Object.assign(S, JSON.parse(localStorage.getItem('pcremote') || '{}')); } catch (e) {}
+S.led = { ...DEFAULTS.led, ...S.led };
 function save() { try { localStorage.setItem('pcremote', JSON.stringify(S)); } catch (e) {} }
 
 function toast(msg, ms = 1800) {
@@ -270,6 +294,7 @@ async function setupGatt() {
   link.q = []; link.mx = link.my = link.wv = link.wh = 0;
   link.ch = ch;
   link.cmd(C.CONFIG, S.enMods, S.enKey, S.ruMods, S.ruKey, S.typeDelay, S.textMode);
+  sendLed();
   setStatus('on', link.dev.name || 'Подключено');
   vib(30);
   keepAwake();
@@ -717,6 +742,51 @@ $('#releaseAll').addEventListener('click', () => {
   link.cmd(C.RELEASE_ALL);
   toast('Все клавиши отпущены');
 });
+
+// ---------- Подсветка ----------
+const LED_MODES = ['Выкл', 'Статус', 'Цвет', 'Дыхание', 'Радуга', 'Мигание', 'Огонь', 'Полиция'];
+const LED_COLORS = ['#ff0000', '#ff6a00', '#ffd000', '#00ff40', '#00ffd0', '#0078ff', '#7a00ff', '#ff00a0', '#ffffff'];
+
+function sendLed() {
+  const L = S.led, c = parseInt(L.color.slice(1), 16);
+  link.cmd(C.LED, L.mode, c >> 16, (c >> 8) & 255, c & 255, L.bright, L.speed, L.flash ? 1 : 0);
+}
+let ledTimer = 0;
+function ledChanged() {
+  save(); paintLed();
+  clearTimeout(ledTimer);
+  ledTimer = setTimeout(sendLed, 40);  // не заваливать BLE при движении слайдера
+}
+function paintLed() {
+  document.querySelectorAll('#ledModes button').forEach((b, i) => b.classList.toggle('on', i === S.led.mode));
+  document.querySelectorAll('#ledColors button').forEach(b => b.classList.toggle('on', b.dataset.c === S.led.color));
+  $('#ledColor').value = S.led.color;
+  $('#ledBright').value = S.led.bright;
+  $('#ledSpeed').value = S.led.speed;
+  $('#ledFlash').checked = S.led.flash;
+}
+LED_MODES.forEach((name, i) => {
+  const b = document.createElement('button');
+  b.textContent = name;
+  b.addEventListener('click', () => { S.led.mode = i; ledChanged(); });
+  $('#ledModes').appendChild(b);
+});
+for (const c of LED_COLORS) {
+  const b = document.createElement('button');
+  b.style.background = c; b.dataset.c = c;
+  b.addEventListener('click', () => {
+    S.led.color = c;
+    if (S.led.mode < 2) S.led.mode = 2;  // выбрал цвет — включить режим «Цвет»
+    ledChanged();
+  });
+  $('#ledColors').appendChild(b);
+}
+$('#ledColor').addEventListener('input', e => { S.led.color = e.target.value; if (S.led.mode < 2) S.led.mode = 2; ledChanged(); });
+$('#ledBright').addEventListener('input', e => { S.led.bright = +e.target.value; ledChanged(); });
+$('#ledSpeed').addEventListener('input', e => { S.led.speed = +e.target.value; ledChanged(); });
+$('#ledFlash').addEventListener('change', e => { S.led.flash = e.target.checked; ledChanged(); });
+$('#ledBtn').addEventListener('click', () => { paintLed(); $('#ledDlg').showModal(); });
+$('#ledClose').addEventListener('click', () => $('#ledDlg').close());
 
 paintLang();
 renderKb();
