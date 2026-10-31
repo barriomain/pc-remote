@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="theme-color" content="#14151a">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon.svg">
@@ -50,6 +50,22 @@
   #txt { flex: 1; min-width: 0; height: 42px; border-radius: 10px; border: 1px solid var(--line); background: #0d0e12;
     color: var(--text); padding: 0 12px; font: inherit; font-size: 16px; user-select: text; -webkit-user-select: text; }
 
+  /* Режим кода */
+  #codeBox { display: none; flex-direction: column; gap: 4px; height: 28dvh; min-height: 110px; flex: none; }
+  #code { flex: 1; min-height: 0; width: 100%; resize: none; border-radius: 10px; border: 1px solid var(--line); background: #0d0e12;
+    color: var(--text); padding: 8px 10px; font: 14px/1.35 ui-monospace, Consolas, monospace; user-select: text; -webkit-user-select: text; }
+  #codeInfo { min-height: 16px; font-size: 12px; color: var(--muted); }
+  #codeInfo.err { color: #f87171; }
+  #run { display: none; flex: 1; background: var(--green); }
+  #run.running { background: var(--red); }
+  #helpBtn { display: none; }
+  #app.code #codeBox { display: flex; }
+  #app.code #txt, #app.code #send, #app.code #lang, #app.code #combos, #app.code #kb { display: none; }
+  #app.code #run { display: block; }
+  #app.code #helpBtn { display: block; }
+  #app.code.editing .padwrap, #app.code.editing .mbtns { display: none; }
+  #app.code.editing #codeBox { flex: 1; height: auto; }
+
   /* Быстрые комбинации */
   #combos { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; flex: none; }
   #combos::-webkit-scrollbar { display: none; }
@@ -96,7 +112,45 @@
   #ledColors button { width: 34px; height: 34px; border-radius: 50%; border: 2px solid var(--line); }
   #ledColors button.on { border-color: #fff; }
   input[type=color] { width: 54px; height: 34px; border: 0; padding: 0; background: none; }
-  #toast { position: fixed; left: 50%; bottom: 40%; transform: translateX(-50%); background: #000d; padding: 10px 16px;
+  .ref { display: grid; grid-template-columns: auto 1fr; gap: 5px 12px; background: #0d0e12; border-radius: 8px; padding: 8px 10px; margin: 6px 0; font-size: 12px; line-height: 1.35; }
+  .ref code { font: 12px/1.35 ui-monospace, Consolas, monospace; font-weight: 700; white-space: nowrap; }
+  .ref span { color: var(--muted); }
+  .example { display: block; width: 100%; text-align: left; background: var(--key); border-radius: 8px; padding: 8px 10px; margin: 6px 0; }
+  .example span { display: block; color: var(--muted); font-size: 12px; }
+
+  /* Игровой режим */
+  #game { position: fixed; inset: 0; z-index: 10; background: #0b0c10; touch-action: none; overflow: hidden; }
+  #game[hidden] { display: none; }
+  #gSurface { position: absolute; inset: 0; touch-action: none; }
+  #gSurface::after { content: ''; position: absolute; top: 12%; bottom: 8%; left: 42%; border-left: 1px dashed #ffffff14; }
+  #gButtons { position: absolute; inset: 0; pointer-events: none; }
+  .gb { position: absolute; transform: translate(-50%, -50%); border-radius: 50%; background: #ffffff1c; border: 1.5px solid #ffffff40;
+    color: #fff; font-weight: 700; padding: 0; pointer-events: auto; touch-action: none; }
+  .gb.toggle { border-style: dashed; }
+  .gb.dn { background: var(--accent); border-color: #fff; }
+  #gJoy { position: absolute; transform: translate(-50%, -50%); border-radius: 50%; border: 2px solid #ffffff40; background: #ffffff0d; pointer-events: none; }
+  #gJoy.active { border-color: #ffffff80; }
+  #gNub { position: absolute; left: 50%; top: 50%; width: 42%; height: 42%; border-radius: 50%; background: #ffffff55; transform: translate(-50%, -50%); }
+  #gTop { position: absolute; top: 6px; left: 50%; transform: translateX(-50%); display: flex; gap: 6px; align-items: center; z-index: 2; }
+  #gTop button { width: 36px; height: 36px; border-radius: 9px; background: #000a; font-size: 16px; padding: 0; touch-action: manipulation; }
+  #gTop button.on { background: var(--accent); }
+  #gDot { width: 10px; height: 10px; border-radius: 50%; background: var(--red); margin: 0 4px; }
+  #gDot.on { background: var(--green); }
+  #gAdd, #gReset { display: none; }
+  #game.editing #gAdd, #game.editing #gReset { display: block; }
+  #game.editing #gSurface { background: repeating-linear-gradient(0deg, #ffffff06 0 1px, transparent 1px 40px), repeating-linear-gradient(90deg, #ffffff06 0 1px, transparent 1px 40px); }
+  #game.editing #gJoy { pointer-events: auto; touch-action: none; border-color: var(--amber); }
+  #game.editing .gb { border-color: var(--amber); }
+  #gRotate { display: none; position: absolute; inset: 0; z-index: 5; background: var(--bg); align-items: center; justify-content: center;
+    flex-direction: column; gap: 14px; text-align: center; padding: 24px; font-size: 18px; }
+  #gRotate i { font-style: normal; font-size: 56px; }
+  @media (orientation: portrait) { #gRotate { display: flex; } }
+  #gSetDlg label span { flex: 1; }
+  .gsh { display: block; margin-top: 12px; }
+  #gbErr { color: #f87171; font-size: 12px; min-height: 16px; }
+  dialog input[type=text] { background: #0d0e12; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px;
+    font-size: 16px; width: 55%; user-select: text; -webkit-user-select: text; }
+  #toast { z-index: 20; position: fixed; left: 50%; bottom: 40%; transform: translateX(-50%); background: #000d; padding: 10px 16px;
     border-radius: 10px; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 90vw; text-align: center; }
   #toast.show { opacity: 1; }
 </style>
@@ -106,6 +160,7 @@
   <div class="bar">
     <button class="btn blue" id="connect">Подключить</button>
     <div id="status"><i></i><span>Не подключено</span></div>
+    <button class="btn icon" id="gameBtn" title="Игровой режим">🎮</button>
     <button class="btn icon" id="kbToggle" title="Клавиатура">⌨</button>
     <button class="btn icon" id="ledBtn" title="Подсветка">💡</button>
     <button class="btn icon" id="settingsBtn" title="Настройки">⚙</button>
@@ -120,11 +175,20 @@
     <button data-b="1">ЛКМ</button><button data-b="4" class="mid">СКМ</button><button data-b="2">ПКМ</button>
   </div>
 
+  <div id="codeBox">
+    <textarea id="code" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off"
+      placeholder="win+r&#10;wait 600&#10;type notepad&#10;enter"></textarea>
+    <div id="codeInfo"></div>
+  </div>
+
   <div class="textrow">
     <input id="txt" placeholder="Текст на русском или английском" autocomplete="off" enterkeyhint="send">
     <button class="btn icon" id="histBtn" title="Буфер">📋</button>
+    <button class="btn icon" id="helpBtn" title="Справка">?</button>
+    <button class="btn icon" id="inputMode" title="Режим ввода: текст или код">Aa</button>
     <button class="btn violet" id="lang">EN</button>
     <button class="btn blue" id="send">Send</button>
+    <button class="btn" id="run">▶ Запустить</button>
   </div>
 
   <div id="combos"></div>
@@ -178,13 +242,83 @@
   </div>
 </dialog>
 <dialog id="hist">
-  <h3>Буфер</h3>
+  <h3 id="histTitle">Буфер</h3>
   <div id="histList"></div>
   <div class="bar" style="justify-content:space-between;margin-top:12px">
     <button class="btn" id="histSave">+ Сохранить поле</button>
     <span>
       <button class="btn" id="histClear">Очистить</button>
       <button class="btn blue" id="histClose">Закрыть</button>
+    </span>
+  </div>
+</dialog>
+<dialog id="helpDlg">
+  <h3>Язык скриптов</h3>
+  <p class="note">Одна команда на строку. Комментарий начинается с <b>#</b>.</p>
+<div class="ref">
+    <code>win+r</code><span>нажать комбинацию</span>
+    <code>enter</code><span>нажать клавишу</span>
+    <code>tab tab enter</code><span>несколько подряд</span>
+    <code>wait 500</code><span>пауза 500 мс (wait 2s — 2 секунды)</span>
+    <code>type Привет</code><span>напечатать текст</span>
+    <code>line dir</code><span>напечатать и нажать Enter</span>
+    <code>raw dir</code><span>английский обычными клавишами, быстрее (нужна раскладка EN)</span>
+    <code>hold shift</code><span>зажать клавишу</span>
+    <code>release shift</code><span>отпустить</span>
+    <code>repeat 5 … end</code><span>повторить 5 раз</span>
+    <code>click</code><span>клик; ещё rclick, mclick, dblclick</span>
+    <code>move 100 -50</code><span>сдвинуть курсор</span>
+    <code>scroll -3</code><span>колесо</span>
+    <code>media play</code><span>ещё next, prev, stop, volup, voldown, mute</span>
+    <code>lang ru</code><span>переключить язык ПК</span>
+  </div>
+  <p class="note">Клавиши: a–z, 0–9, f1–f12, enter, esc, tab, space, backspace, del, home, end, pgup, pgdn,
+    up, down, left, right, ctrl, shift, alt, win. Есть русские команды: пиши, строка, жди, нажми, зажми, отпусти,
+    повтор, конец, клик, пкм.</p>
+  <b>Примеры (тап — вставить)</b>
+  <div id="examples"></div>
+  <div class="bar" style="justify-content:flex-end;margin-top:12px">
+    <button class="btn blue" id="helpClose">Закрыть</button>
+  </div>
+</dialog>
+
+<div id="game" hidden>
+  <div id="gSurface"></div>
+  <div id="gJoy"><div id="gNub"></div></div>
+  <div id="gButtons"></div>
+  <div id="gTop">
+    <span id="gDot"></span>
+    <button id="gExit" title="Выйти">✕</button>
+    <button id="gSettings" title="Настройки">⚙</button>
+    <button id="gEdit" title="Настроить кнопки">✎</button>
+    <button id="gAdd" title="Добавить кнопку">＋</button>
+    <button id="gReset" title="Сбросить кнопки">↺</button>
+    <button id="gGyro" title="Гироскоп">🌀</button>
+    <button id="gMenu" title="Режим меню: медленный курсор">🖱</button>
+  </div>
+  <div id="gRotate"><i>📱↻</i>Поверни телефон горизонтально</div>
+</div>
+<dialog id="gSetDlg">
+  <h3>Настройки игры</h3>
+  <div id="gSetList"></div>
+  <div class="bar" style="justify-content:flex-end;margin-top:12px">
+    <button class="btn blue" id="gSetClose">Готово</button>
+  </div>
+</dialog>
+<dialog id="gBtnDlg">
+  <h3>Кнопка</h3>
+  <label>Название <input type="text" id="gbLabel" maxlength="8" autocomplete="off"></label>
+  <label>Действие <input type="text" id="gbAction" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+  <div id="gbErr"></div>
+  <p class="note">Примеры: <b>space</b>, <b>e</b>, <b>shift</b>, <b>ctrl+z</b>, <b>1</b>, <b>lmb</b> (левая кнопка), <b>rmb</b> (правая),
+    <b>mmb</b> (средняя), <b>wheelup</b>, <b>wheeldown</b> (колесо).</p>
+  <label>Размер <input type="range" id="gbSize" min="32" max="130" step="2"></label>
+  <label>Фиксация (тап — вкл, тап — выкл) <input type="checkbox" id="gbToggle"></label>
+  <div class="bar" style="justify-content:space-between;margin-top:12px">
+    <button class="btn" id="gbDelete">Удалить</button>
+    <span>
+      <button class="btn" id="gbCancel">Отмена</button>
+      <button class="btn blue" id="gbSave">Сохранить</button>
     </span>
   </div>
 </dialog>
@@ -195,14 +329,14 @@
 const SERVICE = '6e400001-b5a3-f393-e0a9-e50e24dc4179';
 const CMD_CHAR = '6e400002-b5a3-f393-e0a9-e50e24dc4179';
 const STATE_CHAR = '6e400003-b5a3-f393-e0a9-e50e24dc4179';
-const C = { MOVE: 1, BTN_DOWN: 2, BTN_UP: 3, WHEEL: 4, CLICK: 5, MEDIA: 6, KEY_DOWN: 0x10, KEY_UP: 0x11,
-  RELEASE_ALL: 0x12, TEXT: 0x20, TEXT_BEGIN: 0x21, CONFIG: 0x30, LAYOUT: 0x31, LED: 0x40 };
+const C = { MOVE: 1, BTN_DOWN: 2, BTN_UP: 3, WHEEL: 4, CLICK: 5, MEDIA: 6, DELAY: 7, SYNC: 8, KEY_DOWN: 0x10, KEY_UP: 0x11,
+  RELEASE_ALL: 0x12, ABORT: 0x13, TEXT: 0x20, TEXT_BEGIN: 0x21, CONFIG: 0x30, LAYOUT: 0x31, LED: 0x40 };
 const BTN = { L: 1, R: 2, M: 4 };
 const $ = s => document.querySelector(s);
 
 // ---------- Настройки ----------
 const DEFAULTS = { sens: 1.6, accel: 1, scroll: 1, natural: true, sendEnter: false, typeDelay: 6,
-  enMods: 3, enKey: 0x1E, ruMods: 3, ruKey: 0x1F, lang: 0, showKb: true, textMode: 0,
+  enMods: 3, enKey: 0x1E, ruMods: 3, ruKey: 0x1F, lang: 0, showKb: true, textMode: 0, inputMode: 'text', codeDraft: '',
   led: { mode: 1, color: '#0078ff', bright: 60, speed: 128, flash: true } };
 let S = { ...DEFAULTS };
 try { Object.assign(S, JSON.parse(localStorage.getItem('pcremote') || '{}')); } catch (e) {}
@@ -220,13 +354,42 @@ const vib = ms => navigator.vibrate && navigator.vibrate(ms);
 // движения мыши накапливаются, пока идёт предыдущая отправка. Текст идёт отдельными
 // пакетами с подтверждением.
 const link = {
-  dev: null, ch: null, q: [], mx: 0, my: 0, wv: 0, wh: 0, busy: false, textChunk: 120,
+  dev: null, ch: null, q: [], mx: 0, my: 0, wv: 0, wh: 0, busy: false, textChunk: 120, syncId: 0, acks: new Map(),
   cmd(...bytes) { this.flushMove(); this.q.push(Uint8Array.from(bytes)); this.kick(); },
   move(dx, dy) { this.mx += dx; this.my += dy; this.kick(); },
   wheel(v, h) { this.wv += v; this.wh += h; this.kick(); },
   text(s) {
     this.cmd(C.TEXT_BEGIN);
     this.q.push({ chars: [...s], pos: 0 });
+    this.kick();
+  },
+  // Ждём, пока ESP дойдёт до этого места очереди
+  sync(timeoutMs) {
+    return new Promise((res, rej) => {
+      if (!this.ch) { rej(new Error('Нет связи с ESP')); return; }
+      const id = this.syncId = (this.syncId + 1) & 255;
+      const timer = setTimeout(() => {
+        this.acks.delete(id);
+        rej(new Error('ESP не ответила. Прошивка обновлена?'));
+      }, timeoutMs);
+      this.acks.set(id, { res, rej, timer });
+      this.cmd(C.SYNC, id);
+    });
+  },
+  ack(id) {
+    const a = this.acks.get(id);
+    if (!a) return;
+    this.acks.delete(id); clearTimeout(a.timer); a.res();
+  },
+  failAcks(err) {
+    for (const a of this.acks.values()) { clearTimeout(a.timer); a.rej(err); }
+    this.acks.clear();
+  },
+  // Остановить печать и скрипт: выкинуть всё неотправленное, ESP чистит свою очередь и отпускает клавиши
+  abort() {
+    this.q = []; this.mx = this.my = this.wv = this.wh = 0;
+    this.failAcks(new Error('Остановлено'));
+    this.q.push(Uint8Array.from([C.ABORT]));
     this.kick();
   },
   flushMove() {
@@ -263,7 +426,7 @@ const link = {
             throw e;
           }
           head.pos = p;
-          if (p >= head.chars.length) this.q.shift();
+          if (p >= head.chars.length && this.q[0] === head) this.q.shift();
           continue;
         }
         this.flushMove();
@@ -304,6 +467,7 @@ function secText(bits, fail) {
 const diag = { espUptime: null, resetReason: 0, discReason: 0, discCount: 0, reconnects: 0, log: [] };
 
 function onState(v) {
+  if (v.byteLength === 2 && v.getUint8(0) === 0xA5) { link.ack(v.getUint8(1)); return; }
   setLeds(v.getUint8(0));
   if (v.byteLength < 9) return;
   const prevUptime = diag.espUptime;
@@ -364,6 +528,7 @@ async function setupGatt(isReconnect = false) {
   link.cmd(C.CONFIG, S.enMods, S.enKey, S.ruMods, S.ruKey, S.typeDelay, S.textMode);
   sendLed();
   setStatus('on', link.dev.name || 'Подключено');
+  Game.linkUp();
   if (isReconnect) { diag.reconnects++; diag.pendingReconnect = true; } else vib(30);
   keepAwake();
 }
@@ -395,6 +560,8 @@ async function onDisconnected() {
   link.ch = null; link.busy = false;
   for (const m of Object.values(mods)) { m.st = 0; m.used = false; }  // ESP сама отпускает всё
   paintMods();
+  link.failAcks(new Error('Связь с ESP потеряна'));
+  Game.linkLost();
   if (manualDisconnect) { setStatus('', 'Отключено'); return; }
   // Автопереподключение
   for (let i = 0; i < 20 && !manualDisconnect; i++) {
@@ -409,6 +576,16 @@ async function keepAwake() {
   try { if ('wakeLock' in navigator && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.onrelease = () => wakeLock = null; } } catch (e) {}
 }
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && link.ch) keepAwake(); });
+
+// ---------- Телефонная клавиатура — только пока палец в поле ввода ----------
+const isTextField = el => !!el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && el.type === 'text') || el.id === 'txt');
+document.addEventListener('pointerdown', e => {
+  const focused = document.activeElement;
+  if (!isTextField(focused) || isTextField(e.target) || e.target.closest?.('#send')) return;
+  focused.blur();
+}, true);
+// Send оставляет клавиатуру открытой, чтобы можно было писать дальше
+$('#send').addEventListener('mousedown', e => e.preventDefault());
 
 // ---------- Тачпад ----------
 const pad = $('#pad');
@@ -701,11 +878,18 @@ let hist = [];
 try { hist = JSON.parse(localStorage.getItem('pcremote_hist') || '[]'); } catch (e) {}
 function saveHist() { try { localStorage.setItem('pcremote_hist', JSON.stringify(hist)); } catch (e) {} }
 
+const codeMode = () => S.inputMode === 'code';
+const inCurrentMode = h => !!h.code === codeMode();
+function loadIntoField(text) {
+  if (codeMode()) { $('#code').value = text; S.codeDraft = text; save(); } else $('#txt').value = text;
+}
+
 function remember(text) {
-  const old = hist.findIndex(h => h.t === text);
+  const code = codeMode();
+  const old = hist.findIndex(h => h.t === text && !!h.code === code);
   const pin = old >= 0 && hist[old].pin;
   if (old >= 0) hist.splice(old, 1);
-  hist.unshift({ t: text, pin });
+  hist.unshift(code ? { t: text, pin, code } : { t: text, pin });
   let unpinned = 0;
   hist = hist.filter(h => h.pin || ++unpinned <= HIST_MAX);
   saveHist();
@@ -714,18 +898,24 @@ function remember(text) {
 function renderHist() {
   const list = $('#histList');
   list.innerHTML = '';
-  const items = [...hist.filter(h => h.pin), ...hist.filter(h => !h.pin)];
-  if (!items.length) { list.innerHTML = '<div class="empty">Пока пусто — отправленные тексты появятся здесь</div>'; return; }
+  const mine = hist.filter(inCurrentMode);
+  const items = [...mine.filter(h => h.pin), ...mine.filter(h => !h.pin)];
+  if (!items.length) {
+    list.innerHTML = `<div class="empty">Пока пусто — ${codeMode() ? 'запущенные скрипты' : 'отправленные тексты'} появятся здесь</div>`;
+    return;
+  }
   for (const h of items) {
     const row = document.createElement('div');
     row.className = 'hi' + (h.pin ? ' pin' : '');
     const t = document.createElement('button');
-    t.className = 't'; t.textContent = h.t; t.title = 'Ввести на ПК';
+    t.className = 't'; t.textContent = h.t; t.title = codeMode() ? 'Запустить' : 'Ввести на ПК';
     t.addEventListener('click', () => {
       if (!link.ch) { toast('Сначала подключись'); return; }
+      $('#hist').close();
+      if (codeMode()) { loadIntoField(h.t); runCode(); return; }
       link.text(S.sendEnter ? h.t + '\n' : h.t);
       remember(h.t); vib(15);
-      $('#hist').close(); toast('Введено');
+      toast('Введено');
     });
     const mk = (icon, title, fn) => {
       const b = document.createElement('button');
@@ -733,25 +923,122 @@ function renderHist() {
       b.addEventListener('click', fn); return b;
     };
     row.append(t,
-      mk('✎', 'В поле ввода', () => { $('#txt').value = h.t; $('#hist').close(); $('#txt').focus(); }),
+      mk('✎', 'В поле ввода', () => { loadIntoField(h.t); $('#hist').close(); }),
       mk(h.pin ? '★' : '☆', 'Закрепить', () => { h.pin = !h.pin; saveHist(); renderHist(); }),
       mk('✕', 'Удалить', () => { hist.splice(hist.indexOf(h), 1); saveHist(); renderHist(); }));
     list.appendChild(row);
   }
 }
-$('#histBtn').addEventListener('click', () => { renderHist(); $('#hist').showModal(); });
+$('#histBtn').addEventListener('click', () => {
+  $('#histTitle').textContent = codeMode() ? 'Скрипты' : 'Буфер';
+  renderHist(); $('#hist').showModal();
+});
 $('#histClose').addEventListener('click', () => $('#hist').close());
 $('#histSave').addEventListener('click', () => {
-  const v = $('#txt').value;
+  const v = codeMode() ? $('#code').value : $('#txt').value;
   if (!v) { toast('Поле ввода пустое'); return; }
   remember(v); renderHist(); toast('Сохранено');
 });
 $('#histClear').addEventListener('click', () => {
   if (!confirm('Удалить всё, кроме закреплённых (★)?')) return;
-  hist = hist.filter(h => h.pin); saveHist(); renderHist();
+  hist = hist.filter(h => h.pin || !inCurrentMode(h)); saveHist(); renderHist();
 });
 $('#send').addEventListener('click', sendText);
 $('#txt').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); sendText(); } });
+
+// ---------- Режим кода ----------
+const EXAMPLES = [
+  ['Блокнот с текстом', 'Открыть блокнот и написать в нём', `# открыть блокнот
+win+r
+wait 600
+line notepad
+wait 1000
+type Привет! Это написал скрипт.
+`],
+  ['Файл на рабочем столе', 'Через терминал создать note.txt', `# открыть терминал
+win+r
+wait 600
+line cmd
+wait 1500
+# создать файл
+line echo Hello from script > %USERPROFILE%\\Desktop\\note.txt
+`],
+  ['Диспетчер задач', 'Одна комбинация', `ctrl+shift+esc
+`],
+  ['Скопировать всё', 'Выделить всё и скопировать', `ctrl+a
+wait 100
+ctrl+c
+`],
+  ['Кликер', '20 кликов с паузой', `repeat 20
+  click
+  wait 100
+end
+`],
+];
+
+const codeEl = $('#code'), codeInfo = $('#codeInfo'), runBtn = $('#run');
+function setCodeInfo(text, isErr = false) {
+  codeInfo.textContent = text;
+  codeInfo.classList.toggle('err', isErr);
+}
+function paintRun() {
+  runBtn.textContent = Script.running ? '■ Стоп' : '▶ Запустить';
+  runBtn.classList.toggle('running', Script.running);
+}
+async function runCode() {
+  if (Script.running) { Script.stop(); return; }
+  const src = codeEl.value;
+  let ops;
+  try {
+    ops = Script.parse(src);
+  } catch (e) {
+    setCodeInfo((e.line ? `Строка ${e.line}: ` : '') + e.message, true);
+    vib(60);
+    return;
+  }
+  if (!ops.length) { setCodeInfo('Скрипт пустой. Нажми ? — там команды и примеры'); return; }
+  if (!link.ch) { setCodeInfo('Сначала подключись к ESP', true); return; }
+  remember(src);
+  codeEl.blur();
+  try {
+    const run = Script.run(ops, (i, n) => setCodeInfo(`Выполняется: ${i + 1} из ${n}`));
+    paintRun();
+    const finished = await run;
+    setCodeInfo(finished ? 'Готово' : 'Остановлено');
+    if (finished) vib(20);
+  } catch (e) {
+    setCodeInfo(e.message, true);
+  }
+  paintRun();
+}
+runBtn.addEventListener('click', runCode);
+codeEl.value = S.codeDraft;
+codeEl.addEventListener('input', () => { S.codeDraft = codeEl.value; save(); setCodeInfo(''); });
+codeEl.addEventListener('focus', () => $('#app').classList.add('editing'));
+codeEl.addEventListener('blur', () => $('#app').classList.remove('editing'));
+
+function paintInputMode() {
+  $('#app').classList.toggle('code', codeMode());
+  $('#inputMode').textContent = codeMode() ? '</>' : 'Aa';
+}
+$('#inputMode').addEventListener('click', () => {
+  S.inputMode = codeMode() ? 'text' : 'code';
+  save(); paintInputMode();
+  toast(codeMode() ? 'Режим кода' : 'Обычный текст', 900);
+});
+
+for (const [title, sub, src] of EXAMPLES) {
+  const b = document.createElement('button');
+  b.className = 'example';
+  b.textContent = title;
+  const small = document.createElement('span');
+  small.textContent = sub;
+  b.appendChild(small);
+  b.addEventListener('click', () => { loadIntoField(src); setCodeInfo(''); $('#helpDlg').close(); });
+  $('#examples').appendChild(b);
+}
+$('#helpBtn').addEventListener('click', () => $('#helpDlg').showModal());
+$('#helpClose').addEventListener('click', () => $('#helpDlg').close());
 
 function paintLang() { $('#lang').textContent = S.lang ? 'RU' : 'EN'; }
 $('#lang').addEventListener('click', () => {
@@ -803,7 +1090,9 @@ $('#closeSettings').addEventListener('click', () => {
 $('#releaseAll').addEventListener('click', () => {
   for (const m of Object.values(mods)) { m.st = 0; m.used = false; }
   paintMods();
-  link.cmd(C.RELEASE_ALL);
+  Script.stop();
+  Game.linkReset();
+  link.abort();  // заодно остановит печать длинного текста
   toast('Все клавиши отпущены');
 });
 
@@ -853,9 +1142,12 @@ $('#ledBtn').addEventListener('click', () => { paintLed(); $('#ledDlg').showModa
 $('#ledClose').addEventListener('click', () => $('#ledDlg').close());
 
 paintLang();
+paintInputMode();
 renderKb();
 if (!navigator.bluetooth) setStatus('', 'Нет Bluetooth в браузере');
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
 </script>
+<script src="script.js"></script>
+<script src="game.js"></script>
 </body>
 </html>
