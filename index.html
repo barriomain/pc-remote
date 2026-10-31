@@ -41,8 +41,10 @@
   #scroll { width: 34px; border-radius: 14px; background: var(--panel); border: 1px solid var(--line);
     touch-action: none; display: flex; align-items: center; justify-content: center; color: var(--muted); writing-mode: vertical-rl; font-size: 11px; }
   .mbtns { display: flex; gap: 6px; }
-  .mbtns button { flex: 1; height: 38px; border-radius: 10px; background: var(--key); color: var(--muted); font-weight: 600; touch-action: none; }
+  .mbtns button { flex: 1; height: 57px; border-radius: 10px; background: var(--key); color: var(--muted); font-weight: 600; touch-action: none; }
   .mbtns button.mid { flex: .5; }
+  .mbtns button.air { flex: .5; font-size: 20px; touch-action: manipulation; }
+  .mbtns button.air.on { background: var(--accent); }
   .mbtns button.dn { background: var(--key-dn); color: var(--text); }
 
   /* Текст */
@@ -163,6 +165,13 @@
   .keyitem code { font: 700 13px ui-monospace, Consolas, monospace; flex: none; min-width: 74px; }
   .keyitem span { color: var(--muted); font-size: 12px; }
   #gSetDlg label span { flex: 1; }
+  #gType { position: absolute; top: 48px; left: 50%; transform: translateX(-50%); width: min(640px, calc(100% - 24px)); display: flex; gap: 6px; z-index: 3; }
+  #gType[hidden] { display: none; }
+  #gTypeField { flex: 1; min-width: 0; height: 42px; border-radius: 10px; border: 1px solid var(--accent); background: #0d0e12; color: var(--text);
+    padding: 0 12px; font: inherit; font-size: 16px; user-select: text; -webkit-user-select: text; }
+  #gTypeClose { width: 42px; height: 42px; border-radius: 10px; background: #000c; font-size: 16px; padding: 0; }
+  #gLibList { display: flex; flex-direction: column; gap: 6px; max-height: 50dvh; overflow-y: auto; }
+  #gLibList input { flex: 1; min-width: 0; width: auto; }
   .gsh { display: block; margin-top: 12px; }
   #gbErr { color: #f87171; font-size: 12px; min-height: 16px; }
   dialog input[type=text] { background: #0d0e12; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px;
@@ -189,7 +198,7 @@
     <div id="scroll">прокрутка</div>
   </div>
   <div class="mbtns">
-    <button data-b="1">ЛКМ</button><button data-b="4" class="mid">СКМ</button><button data-b="2">ПКМ</button>
+    <button data-b="1">ЛКМ</button><button data-b="4" class="mid">СКМ</button><button data-b="2">ПКМ</button><button id="airBtn" class="air" title="Гироскоп: телефон как пульт">🌀</button>
   </div>
 
   <div id="codeBox">
@@ -221,6 +230,17 @@
   <label>Полоса прокрутки: обратное направление <input type="checkbox" id="sStripInvert"></label>
   <label>Enter после отправки текста <input type="checkbox" id="sEnter"></label>
   <label>Задержка печати, мс <input type="range" id="sDelay" min="2" max="30" step="1"></label>
+  <hr>
+  <b>Гироскоп 🌀</b>
+  <p class="note">Телефон как пульт телевизора: наклон вниз и вверх — курсор вниз и вверх, поворот как руль по часовой — вправо, против — влево.</p>
+  <label>Скорость влево/вправо <input type="range" id="sAirX" min="1" max="300" step="1"></label>
+  <label>Скорость вверх/вниз <input type="range" id="sAirY" min="1" max="300" step="1"></label>
+  <label>Игнорировать дрожание <input type="range" id="sAirDead" min="0" max="10" step="0.5"></label>
+  <button class="btn" id="sAirCal" style="width:100%">Настроить гироскоп</button>
+  <hr>
+  <b>Кнопки громкости телефона</b>
+  <label>Меняют <select id="sVolKeys"></select></label>
+  <p class="note volTest"></p>
   <hr>
   <b>Ввод текста</b>
   <label>Способ <select id="sTextMode"></select></label>
@@ -314,9 +334,27 @@
     <button id="gReset" title="Сбросить кнопки">↺</button>
     <button id="gGyro" title="Гироскоп">🌀</button>
     <button id="gMenu" title="Режим меню: медленный курсор">🖱</button>
+    <button id="gLib" title="Библиотека настроек">📚</button>
+    <button id="gTypeBtn" title="Ввод текста с клавиатуры телефона">⌨</button>
+  </div>
+  <div id="gType" hidden>
+    <input type="text" id="gTypeField" placeholder="Пиши или диктуй — сразу на ПК" autocomplete="off" enterkeyhint="send">
+    <button id="gTypeClose" title="Закрыть">✕</button>
   </div>
   <div id="gRotate"><i>📱↻</i>Поверни телефон горизонтально</div>
 </div>
+<dialog id="gLibDlg">
+  <h3>Библиотека настроек</h3>
+  <div id="gLibList"></div>
+  <div class="bar" style="margin-top:10px">
+    <button class="btn" id="gLibCopy" style="flex:1">＋ Копия текущей</button>
+    <button class="btn" id="gLibNew" style="flex:1">＋ С нуля</button>
+  </div>
+  <p class="note">В настройке хранятся кнопки, джойстик и чувствительность. Всё, что меняешь, сразу сохраняется в выбранную (✓). Оси гироскопа общие.</p>
+  <div class="bar" style="justify-content:flex-end">
+    <button class="btn blue" id="gLibClose">Готово</button>
+  </div>
+</dialog>
 <dialog id="gSetDlg">
   <h3>Настройки игры</h3>
   <div id="gSetList"></div>
@@ -398,6 +436,7 @@ const $ = s => document.querySelector(s);
 // ---------- Настройки ----------
 const DEFAULTS = { sens: 1.6, accel: 1, scroll: 1, natural: true, sendEnter: false, typeDelay: 6,
   enMods: 3, enKey: 0x1E, ruMods: 3, ruKey: 0x1F, lang: 0, showKb: true, textMode: 0, inputMode: 'text', codeDraft: '', stripInvert: false,
+  airX: 30, airY: 30, airDead: 1, airMap: null, volKeys: 'pc',
   led: { mode: 1, color: '#0078ff', bright: 60, speed: 128, flash: true } };
 let S = { ...DEFAULTS };
 try { Object.assign(S, JSON.parse(localStorage.getItem('pcremote') || '{}')); } catch (e) {}
@@ -419,8 +458,9 @@ const link = {
   cmd(...bytes) { this.flushMove(); this.q.push(Uint8Array.from(bytes)); this.kick(); },
   move(dx, dy) { this.mx += dx; this.my += dy; this.kick(); },
   wheel(v, h) { this.wv += v; this.wh += h; this.kick(); },
-  text(s) {
-    this.cmd(C.TEXT_BEGIN);
+  // begin — начало нового текста: ESP заново выясняет раскладку ПК
+  text(s, begin = true) {
+    if (begin) this.cmd(C.TEXT_BEGIN); else this.flushMove();
     this.q.push({ chars: [...s], pos: 0 });
     this.kick();
   },
@@ -642,7 +682,7 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 const isTextField = el => !!el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && el.type === 'text') || el.id === 'txt');
 document.addEventListener('pointerdown', e => {
   const focused = document.activeElement;
-  if (!isTextField(focused) || isTextField(e.target) || e.target.closest?.('#send')) return;
+  if (!isTextField(focused) || isTextField(e.target) || e.target.closest?.('#send, #gType, #gTypeBtn')) return;
   focused.blur();
 }, true);
 // Send оставляет клавиатуру открытой, чтобы можно было писать дальше
@@ -760,7 +800,7 @@ sc.addEventListener('touchmove', e => {
 }, { passive: false });
 
 // Кнопки мыши (можно держать)
-document.querySelectorAll('.mbtns button').forEach(b => {
+document.querySelectorAll('.mbtns button[data-b]').forEach(b => {
   const m = +b.dataset.b;
   b.addEventListener('pointerdown', e => { b.setPointerCapture(e.pointerId); b.classList.add('dn'); link.cmd(C.BTN_DOWN, m); vib(10); });
   const up = () => { if (!b.classList.contains('dn')) return; b.classList.remove('dn'); link.cmd(C.BTN_UP, m); };
@@ -1134,12 +1174,14 @@ function fillSelect(sel, opts, val) {
 }
 const bindings = [
   ['#sSens', 'sens', 'range'], ['#sAccel', 'accel', 'range'], ['#sScroll', 'scroll', 'range'], ['#sDelay', 'typeDelay', 'range'],
+  ['#sAirX', 'airX', 'range'], ['#sAirY', 'airY', 'range'], ['#sAirDead', 'airDead', 'range'],
   ['#sNatural', 'natural', 'check'], ['#sStripInvert', 'stripInvert', 'check'], ['#sEnter', 'sendEnter', 'check'],
   ['#sTextMode', 'textMode', 'select'], ['#sEnMods', 'enMods', 'select'], ['#sEnKey', 'enKey', 'select'], ['#sRuMods', 'ruMods', 'select'], ['#sRuKey', 'ruKey', 'select'],
 ];
 $('#settingsBtn').addEventListener('click', () => {
   fillSelect($('#sEnMods'), MOD_OPTS, S.enMods); fillSelect($('#sRuMods'), MOD_OPTS, S.ruMods);
   fillSelect($('#sTextMode'), [['Alt-коды', 0], ['Хоткеи раскладки', 1]], S.textMode);
+  fillSelect($('#sVolKeys'), [['Громкость ПК', 'pc'], ['Громкость телефона', 'phone']], S.volKeys);
   fillSelect($('#sEnKey'), KEY_OPTS, S.enKey); fillSelect($('#sRuKey'), KEY_OPTS, S.ruKey);
   for (const [sel, key, type] of bindings) {
     const el = $(sel);
@@ -1154,6 +1196,7 @@ $('#closeSettings').addEventListener('click', () => {
     const el = $(sel);
     S[key] = type === 'check' ? el.checked : +el.value;
   }
+  S.volKeys = $('#sVolKeys').value;
   save();
   link.cmd(C.CONFIG, S.enMods, S.enKey, S.ruMods, S.ruKey, S.typeDelay, S.textMode);
   dlg.close();
@@ -1220,6 +1263,7 @@ if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.se
 </script>
 <script src="script.js"></script>
 <script src="keys.js"></script>
+<script src="gyro.js"></script>
 <script src="game.js"></script>
 </body>
 </html>

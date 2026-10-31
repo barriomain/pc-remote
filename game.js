@@ -6,6 +6,7 @@ const Game = (() => {
     tapAction: 'lmb', holdAction: 'rmb', doubleHoldAction: 'lmb', holdMs: 300,
     gyro: 0, gyroX: 30, gyroY: 30, gyroInvX: false, gyroInvY: false, gyroRoll: false, gyroDead: 1, gyroMap: null,
     joyMode: 'smooth', joyFloat: true, joySprint: true, joySize: 150, joyX: 16, joyY: 70,
+    volUp: 'volup', volDown: 'voldown',
     buttons: null, layoutV: 2,
   };
   const DEFAULT_BUTTONS = [
@@ -23,7 +24,7 @@ const Game = (() => {
   const MOUSE = { lmb: BTN.L, rmb: BTN.R, mmb: BTN.M, mb4: 8, mb5: 16 };
   const MEDIA_KEYS = { volup: 0xE9, voldown: 0xEA, mute: 0xE2, playpause: 0xCD, nexttrack: 0xB5, prevtrack: 0xB6, stopmedia: 0xB7 };
   // Chrome: alpha — ось X телефона, beta — Y, gamma — Z. Знаки для горизонтального положения с angle 90.
-  const GYRO_AXES = ['alpha', 'beta', 'gamma'];
+  const GYRO_AXES = GyroCal.AXES;
   const DEFAULT_GYRO_MAP = { yaw: { axis: 'alpha', sign: -1 }, pitch: { axis: 'beta', sign: 1 }, angle: 90 };
   const JOY_PWM_MS = 100;  // Minecraft читает клавиши раз в 50 мс: импульс короче двух тиков может потеряться
   const WHEEL = { wheelup: 1, wheeldown: -1 };
@@ -39,7 +40,13 @@ const Game = (() => {
     G.buttons.push({ ...DEFAULT_BUTTONS.find(b => b.type === 'strip') });
     G.layoutV = 2;
   }
-  const persist = () => { S.game = G; save(); };
+  // Библиотека: S.game — настройка, с которой работаем сейчас, её копия лежит в выбранной записи.
+  // Оси гироскопа зависят от телефона, а не от игры, поэтому общие для всех.
+  const clone = o => JSON.parse(JSON.stringify(o));
+  const profileOf = () => { const { gyroMap, ...cfg } = G; return clone(cfg); };
+  if (!S.gameLib?.items?.length) S.gameLib = { cur: 0, items: [{ name: 'Minecraft', cfg: profileOf() }] };
+  const lib = S.gameLib;
+  const persist = () => { S.game = G; lib.items[lib.cur].cfg = profileOf(); save(); };
 
   const root = $('#game'), surface = $('#gSurface'), layer = $('#gButtons'), joyBase = $('#gJoy'), joyNub = $('#gNub');
   let active = false, editing = false, menuMode = false, wentFullscreen = false;
@@ -487,7 +494,7 @@ const Game = (() => {
   const gyro = { listening: false, last: 0, gotEvent: false, checkTimer: 0 };
 
   function gyroWanted() {
-    if (!active || editing || menuMode || cal.on) return false;
+    if (!active || editing || menuMode || typing.open || GyroCal.active()) return false;
     return G.gyro === 1 || (G.gyro === 2 && look.id !== null);
   }
   function onMotion(e) {
@@ -509,10 +516,7 @@ const Game = (() => {
   }
   async function gyroStart() {
     if (gyro.listening) return;
-    if (typeof DeviceMotionEvent === 'undefined') { toast('Гироскоп в этом браузере недоступен'); return; }
-    if (DeviceMotionEvent.requestPermission) {
-      try { if (await DeviceMotionEvent.requestPermission() !== 'granted') { toast('Нет разрешения на датчики движения'); return; } } catch (e) { return; }
-    }
+    if (!await GyroCal.permission()) return;
     window.addEventListener('devicemotion', onMotion);
     gyro.listening = true; gyro.gotEvent = false; gyro.last = 0;
     clearTimeout(gyro.checkTimer);
@@ -536,96 +540,22 @@ const Game = (() => {
     if (G.gyro && !G.gyroMap) calStart();
   });
 
-  // ---------- Настройка гироскопа: человек показывает движения, сайт запоминает оси и знаки ----------
+  // ---------- Настройка гироскопа: смотреть налево — мышь влево (dir -1), смотреть вверх — мышь вверх (dir -1) ----------
   const CAL_STEPS = [
-    { id: 'up', icon: '⬆', text: 'Наклони телефон камерой вверх' },
-    { id: 'down', icon: '⬇', text: 'Наклони телефон камерой вниз' },
-    { id: 'left', icon: '⬅', text: 'Поверни телефон налево' },
-    { id: 'right', icon: '➡', text: 'Поверни телефон направо' },
+    { id: 'up', axis: 'pitch', dir: -1, icon: '⬆', text: 'Наклони телефон камерой вверх' },
+    { id: 'down', axis: 'pitch', dir: 1, icon: '⬇', text: 'Наклони телефон камерой вниз' },
+    { id: 'left', axis: 'yaw', dir: -1, icon: '⬅', text: 'Поверни телефон налево' },
+    { id: 'right', axis: 'yaw', dir: 1, icon: '➡', text: 'Поверни телефон направо' },
   ];
-  const CAL_DEG = 30, CAL_NOISE = 3, CAL_STILL = 25, CAL_STILL_MS = 400;
-  const cal = { on: false, step: 0, phase: 'move', sum: {}, got: {}, last: 0, stillSince: 0 };
-  const calDlg = $('#gCalDlg');
-
-  function calPaint() {
-    const s = CAL_STEPS[cal.step];
-    $('#gCalIcon').textContent = cal.phase === 'move' ? s.icon : '↩';
-    $('#gCalText').textContent = cal.phase === 'move' ? s.text : 'Хорошо. Верни телефон обратно и замри';
-    $('#gCalStep').textContent = `Шаг ${cal.step + 1} из ${CAL_STEPS.length}`;
-    $('#gCalBar').style.width = (cal.phase === 'move'
-      ? Math.min(1, calMax() / CAL_DEG) : 1) * 100 + '%';
-  }
-  const calMax = () => Math.max(...GYRO_AXES.map(a => Math.abs(cal.sum[a] || 0)));
-
-  function calMotion(e) {
-    const r = e.rotationRate;
-    const dt = cal.last ? Math.min(e.timeStamp - cal.last, 50) / 1000 : 0;
-    cal.last = e.timeStamp;
-    if (!r || !dt) return;
-    if (cal.phase === 'move') {
-      for (const a of GYRO_AXES) if (Math.abs(r[a] || 0) > CAL_NOISE) cal.sum[a] = (cal.sum[a] || 0) + r[a] * dt;
-      if (calMax() >= CAL_DEG) {
-        cal.got[CAL_STEPS[cal.step].id] = { ...cal.sum };
-        cal.phase = 'back';
-        cal.stillSince = 0;
-        vib(30);
-      }
-    } else {
-      const moving = GYRO_AXES.some(a => Math.abs(r[a] || 0) > CAL_STILL);
-      if (moving) cal.stillSince = 0;
-      else if (!cal.stillSince) cal.stillSince = e.timeStamp;
-      else if (e.timeStamp - cal.stillSince >= CAL_STILL_MS) {
-        cal.step++;
-        cal.phase = 'move';
-        cal.sum = {};
-        if (cal.step === CAL_STEPS.length) { calFinish(); return; }
-      }
-    }
-    calPaint();
-  }
-
-  // Ось движения — та, что сильнее всех разошлась между двумя противоположными шагами
-  function calAxis(a, b) {
-    const diff = GYRO_AXES.map(ax => ({ axis: ax, v: (a[ax] || 0) - (b[ax] || 0) }));
-    const best = diff.reduce((m, d) => (Math.abs(d.v) > Math.abs(m.v) ? d : m));
-    return (a[best.axis] || 0) * (b[best.axis] || 0) < 0 ? best : null;
-  }
-  function calFinish() {
-    calStop();
-    const pitch = calAxis(cal.got.up, cal.got.down), yaw = calAxis(cal.got.left, cal.got.right);
-    if (!pitch || !yaw || pitch.axis === yaw.axis) {
-      $('#gCalIcon').textContent = '⚠';
-      $('#gCalText').textContent = 'Не удалось разобрать движения. Наклоняй и поворачивай только в одну сторону за шаг';
-      $('#gCalBar').style.width = '0';
-      $('#gCalRetry').hidden = false;
-      return;
-    }
-    // Смотреть вверх — мышь вверх (dy < 0), смотреть налево — мышь влево (dx < 0)
-    G.gyroMap = { yaw: { axis: yaw.axis, sign: -Math.sign(yaw.v) }, pitch: { axis: pitch.axis, sign: -Math.sign(pitch.v) },
-      angle: screen.orientation?.angle ?? 90 };
-    G.gyroInvX = G.gyroInvY = false;
-    if (!G.gyro) G.gyro = 1;
-    persist(); syncGyro();
-    calDlg.close();
-    toast('Гироскоп настроен', 1500);
-  }
-  function calStop() {
-    cal.on = false;
-    window.removeEventListener('devicemotion', calMotion);
-  }
-  function calBegin() {
-    Object.assign(cal, { on: true, step: 0, phase: 'move', sum: {}, got: {}, last: 0 });
-    $('#gCalRetry').hidden = true;
-    window.addEventListener('devicemotion', calMotion);
-    calPaint();
-  }
   function calStart() {
-    if (typeof DeviceMotionEvent === 'undefined') { toast('Гироскоп в этом браузере недоступен'); return; }
-    calBegin();
-    calDlg.showModal();
+    GyroCal.start(CAL_STEPS, map => {
+      G.gyroMap = map;
+      G.gyroInvX = G.gyroInvY = false;
+      if (!G.gyro) G.gyro = 1;
+      persist(); syncGyro();
+      toast('Гироскоп настроен', 1500);
+    });
   }
-  $('#gCalRetry').addEventListener('click', calBegin);
-  $('#gCalCancel').addEventListener('click', () => { calStop(); calDlg.close(); });
   $('#gCalStart').addEventListener('click', () => { $('#gSetDlg').close(); calStart(); });
 
   onTap($('#gMenu'), () => {
@@ -657,6 +587,9 @@ const Game = (() => {
     { key: 'joyFloat', label: 'Появляется под пальцем', check: true },
     { key: 'joySprint', label: 'Полный наклон вперёд — бег (Ctrl)', check: true },
     { key: 'joySize', label: 'Размер', min: 90, max: 260, step: 5 },
+    { title: 'Кнопки громкости телефона' },
+    { key: 'volUp', label: 'Громкость +', action: true },
+    { key: 'volDown', label: 'Громкость −', action: true },
   ];
   const setList = $('#gSetList');
   function renderSettings() {
@@ -672,7 +605,16 @@ const Game = (() => {
       const name = document.createElement('span');
       row.appendChild(name);
       let input;
-      if (item.check) {
+      if (item.action) {
+        name.textContent = item.label;
+        input = document.createElement('button');
+        input.className = 'btn';
+        input.textContent = G[item.key];
+        input.addEventListener('click', e => {
+          e.preventDefault();  // кнопка внутри label не должна нажиматься второй раз
+          KeyList.open(picked => { G[item.key] = picked.action; applySettings(); renderSettings(); });
+        });
+      } else if (item.check) {
         name.textContent = item.label;
         input = document.createElement('input');
         input.type = 'checkbox';
@@ -698,11 +640,213 @@ const Game = (() => {
       row.appendChild(input);
       setList.appendChild(row);
     }
+    const note = document.createElement('p');
+    note.className = 'note volTest';
+    setList.appendChild(note);
+    paintVolTest();
   }
   function applySettings() { persist(); placeJoyAtRest(); paintJoy(0, 0); syncGyro(); }
   $('#gButtons').addEventListener('contextmenu', e => e.preventDefault());
   onTap($('#gSettings'), () => { renderSettings(); $('#gSetDlg').showModal(); });
   $('#gSetClose').addEventListener('click', () => $('#gSetDlg').close());
+
+  // ---------- Библиотека настроек ----------
+  const libDlg = $('#gLibDlg'), libList = $('#gLibList');
+
+  function useProfile(index) {
+    releaseAll();
+    lib.cur = index;
+    Object.assign(G, GAME_DEFAULTS, clone(lib.items[index].cfg), { gyroMap: G.gyroMap });
+    if (!Array.isArray(G.buttons)) G.buttons = DEFAULT_BUTTONS.map(b => ({ ...b }));
+    persist();
+    renderButtons(); placeJoyAtRest(); paintJoy(0, 0); syncGyro();
+  }
+  function renameRow(row, item) {
+    const input = document.createElement('input');
+    input.type = 'text'; input.value = item.name; input.maxLength = 24; input.autocomplete = 'off';
+    row.firstChild.replaceWith(input);
+    let done = false;
+    const commit = () => {
+      if (done) return;
+      done = true;
+      item.name = input.value.trim() || item.name;
+      persist(); renderLib();
+    };
+    input.addEventListener('blur', commit);
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); input.blur(); } });
+    input.focus();
+    input.select();
+  }
+  function removeProfile(index) {
+    lib.items.splice(index, 1);
+    if (index === lib.cur) useProfile(Math.min(index, lib.items.length - 1));
+    else { if (index < lib.cur) lib.cur--; persist(); }
+    renderLib();
+  }
+  function renderLib() {
+    libList.innerHTML = '';
+    lib.items.forEach((item, i) => {
+      const row = document.createElement('div');
+      row.className = 'hi' + (i === lib.cur ? ' pin' : '');
+      const name = document.createElement('button');
+      name.className = 't';
+      name.textContent = (i === lib.cur ? '✓ ' : '') + item.name;
+      name.addEventListener('click', () => {
+        if (i !== lib.cur) { persist(); useProfile(i); }
+        libDlg.close();
+        toast('Настройка: ' + item.name, 1200);
+      });
+      const mk = (icon, title, fn) => {
+        const b = document.createElement('button');
+        b.className = 's'; b.textContent = icon; b.title = title;
+        b.addEventListener('click', () => fn(b));
+        return b;
+      };
+      row.append(name, mk('✎', 'Переименовать', () => renameRow(row, item)));
+      if (lib.items.length > 1) {
+        // Диалог confirm выкинул бы из полноэкранного режима, поэтому подтверждение прямо на кнопке
+        row.append(mk('✕', 'Удалить', b => {
+          if (b.textContent === 'Да?') { removeProfile(i); return; }
+          b.textContent = 'Да?';
+          setTimeout(() => { b.textContent = '✕'; }, 3000);
+        }));
+      }
+      libList.appendChild(row);
+    });
+  }
+  function addProfile(name, cfg) {
+    persist();
+    lib.items.push({ name, cfg });
+    useProfile(lib.items.length - 1);
+    renderLib();
+    renameRow(libList.lastChild, lib.items[lib.cur]);
+  }
+  onTap($('#gLib'), () => { renderLib(); libDlg.showModal(); });
+  $('#gLibCopy').addEventListener('click', () => addProfile(lib.items[lib.cur].name.slice(0, 16) + ' копия', profileOf()));
+  $('#gLibNew').addEventListener('click', () => addProfile('Игра ' + (lib.items.length + 1), { ...GAME_DEFAULTS, buttons: DEFAULT_BUTTONS.map(b => ({ ...b })) }));
+  $('#gLibClose').addEventListener('click', () => libDlg.close());
+
+  // ---------- Живой ввод: всё, что меняется в поле, сразу повторяется на ПК ----------
+  const KEY_ENTER = 0x28, KEY_BACKSPACE = 0x2A, KEY_RIGHT = 0x4F, KEY_LEFT = 0x50;
+  const ALT_ONLY = '«»—–…“”„‘’•€°\u00A0';
+  const typeBox = $('#gType'), typeField = $('#gTypeField');
+  // sent — текст на ПК, caret — где там стоит курсор
+  const typing = { open: false, sent: [], caret: 0, pumping: false, backspaceAt: 0 };
+
+  // ESP молча пропускает символы, которые не умеет печатать (эмодзи): считать их нельзя, иначе удаление сотрёт лишнее
+  function typable(c) {
+    const cp = c.codePointAt(0);
+    if ((cp >= 0x20 && cp <= 0x7E) || (cp >= 0x410 && cp <= 0x44F) || c === 'Ё' || c === 'ё' || c === '№') return true;
+    return !S.textMode && ALT_ONLY.includes(c);
+  }
+  const typeTarget = () => [...typeField.value].filter(typable);
+  const sameText = (a, b) => a.length === b.length && a.every((c, i) => c === b[i]);
+  function tapKey(code, times = 1) {
+    for (let i = 0; i < times; i++) { link.cmd(C.KEY_DOWN, code); link.cmd(C.KEY_UP, code); }
+  }
+  // Находим изменившийся кусок, ведём к его концу курсор ПК, стираем старое и печатаем новое.
+  // Так работают и правка в середине поля, и автозамена, и голосовой ввод, который переписывает слова.
+  function typeSync() {
+    const prev = typing.sent, next = typeTarget();
+    if (sameText(prev, next)) return;
+    let head = 0;
+    while (head < prev.length && head < next.length && prev[head] === next[head]) head++;
+    let tail = 0;
+    while (tail < prev.length - head && tail < next.length - head && prev[prev.length - 1 - tail] === next[next.length - 1 - tail]) tail++;
+    const end = prev.length - tail, added = next.slice(head, next.length - tail);
+    tapKey(end > typing.caret ? KEY_RIGHT : KEY_LEFT, Math.abs(end - typing.caret));
+    tapKey(KEY_BACKSPACE, end - head);
+    if (added.length) link.text(added.join(''), false);
+    typing.sent = next;
+    typing.caret = head + added.length;
+  }
+  // Пока ESP печатает, правки копятся: незачем печатать каждый промежуточный вариант голосового ввода
+  async function typePump() {
+    if (typing.pumping) return;
+    typing.pumping = true;
+    while (typing.open && link.ch && !sameText(typing.sent, typeTarget())) {
+      typeSync();
+      try { await link.sync(15000); } catch (e) { break; }
+    }
+    typing.pumping = false;
+  }
+  function typeReset() {
+    typeField.value = '';
+    typing.sent = [];
+    typing.caret = 0;
+  }
+  function typeOpen() {
+    if (!link.ch) { toast('Сначала подключись'); return; }
+    releaseAll();  // зажатый Shift или W испортили бы текст
+    typing.open = true;
+    typeReset();
+    typeBox.hidden = false;
+    $('#gTypeBtn').classList.add('on');
+    link.cmd(C.TEXT_BEGIN);
+    typeField.focus();
+  }
+  function typeClose(sendRest = true) {
+    if (!typing.open) return;
+    if (sendRest && link.ch) typeSync();
+    typing.open = false;
+    typeReset();
+    typeBox.hidden = true;
+    $('#gTypeBtn').classList.remove('on');
+    typeField.blur();
+  }
+  typeField.addEventListener('input', typePump);
+  typeField.addEventListener('blur', () => typeClose());
+  typeField.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      typeSync();
+      tapKey(KEY_ENTER);
+      typeReset();
+    } else if (e.key === 'Backspace' && !typeField.value) {
+      // Поле пустое: стираем то, что на ПК было раньше
+      typing.backspaceAt = e.timeStamp;
+      tapKey(KEY_BACKSPACE);
+    }
+  });
+  // Не каждая телефонная клавиатура присылает keydown для Backspace
+  typeField.addEventListener('beforeinput', e => {
+    if (!typeField.value && e.inputType === 'deleteContentBackward' && e.timeStamp - typing.backspaceAt > 100) tapKey(KEY_BACKSPACE);
+  });
+  onTap($('#gTypeBtn'), () => { if (typing.open) typeClose(); else typeOpen(); });
+  onTap($('#gTypeClose'), () => typeClose());
+
+  // ---------- Кнопки громкости телефона ----------
+  // Браузер может не отдавать их сайту, поэтому в настройках показываем, дошло ли нажатие
+  const VOL_KEYS = { AudioVolumeUp: 'volUp', VolumeUp: 'volUp', AudioVolumeDown: 'volDown', VolumeDown: 'volDown' };
+  const PC_VOLUME = { volUp: 'volup', volDown: 'voldown' };
+  const volHeld = new Map();
+  let volSeen = false;
+  function paintVolTest() {
+    document.querySelectorAll('.volTest').forEach(el => {
+      el.textContent = volSeen ? '✓ Сайт видит кнопки громкости'
+        : 'Проверка: нажми кнопку громкости. Если здесь не появится галочка, браузер не отдаёт эти кнопки сайту, и они меняют только громкость телефона';
+    });
+  }
+  $('#settingsBtn').addEventListener('click', paintVolTest);
+  document.addEventListener('keydown', e => {
+    const key = VOL_KEYS[e.key];
+    if (!key) return;
+    if (!volSeen) { volSeen = true; paintVolTest(); }
+    if (document.querySelector('dialog[open]') || editing || typing.open) return;
+    if (!active && S.volKeys !== 'pc') return;
+    e.preventDefault();
+    const action = active ? G[key] : PC_VOLUME[key];
+    if (e.repeat && !MEDIA_KEYS[action] && !WHEEL[action]) return;  // клавишу держим, а звук и колесо повторяем
+    volHeld.set(key, action);
+    actionDown(action);
+  }, true);
+  document.addEventListener('keyup', e => {
+    const key = VOL_KEYS[e.key];
+    if (!key || !volHeld.has(key)) return;
+    e.preventDefault();
+    actionUp(volHeld.get(key));
+    volHeld.delete(key);
+  }, true);
 
   // ---------- Вход и выход ----------
   async function enter() {
@@ -723,6 +867,7 @@ const Game = (() => {
   }
   function exit() {
     if (editing) setEditing(false);
+    typeClose();
     releaseAll();
     active = false;
     root.hidden = true;
@@ -739,7 +884,8 @@ const Game = (() => {
   document.addEventListener('visibilitychange', () => { if (active && document.visibilityState !== 'visible') releaseAll(); });
 
   return {
-    linkLost() { releaseAll(false); syncStatus(); },
+    isActive: () => active,
+    linkLost() { typeClose(false); releaseAll(false); syncStatus(); },
     linkUp: syncStatus,
     linkReset() { releaseAll(false); },
   };
