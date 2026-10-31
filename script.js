@@ -13,6 +13,9 @@ const Script = (() => {
     вин: 0xE3, контрол: 0xE0, ктрл: 0xE0, шифт: 0xE1, альт: 0xE2,
   };
   for (let i = 1; i <= 12; i++) KEYS['f' + i] = 0x3A + i - 1;
+  for (let i = 13; i <= 24; i++) KEYS['f' + i] = 0x68 + i - 13;
+  for (let i = 1; i <= 9; i++) KEYS['kp' + i] = 0x59 + i - 1;
+  Object.assign(KEYS, { kp0: 0x62, kpdot: 0x63, kpenter: 0x58, kpplus: 0x57, kpminus: 0x56, kpmul: 0x55, kpdiv: 0x54 });
 
   const MEDIA = { play: 0xCD, pause: 0xCD, stop: 0xB7, next: 0xB5, prev: 0xB6, volup: 0xE9, voldown: 0xEA, mute: 0xE2 };
   const CMD_ALIASES = {

@@ -4,9 +4,9 @@ const Game = (() => {
   const GAME_DEFAULTS = {
     sens: 8, menuSens: 1.5, invertY: false,
     tapAction: 'lmb', holdAction: 'rmb', doubleHoldAction: 'lmb', holdMs: 300,
-    gyro: 0, gyroX: 30, gyroY: 30, gyroInvX: false, gyroInvY: false, gyroRoll: false, gyroDead: 1,
-    joyFloat: true, joySprint: true, joySize: 150, joyX: 16, joyY: 70,
-    buttons: null,
+    gyro: 0, gyroX: 30, gyroY: 30, gyroInvX: false, gyroInvY: false, gyroRoll: false, gyroDead: 1, gyroMap: null,
+    joyMode: 'smooth', joyFloat: true, joySprint: true, joySize: 150, joyX: 16, joyY: 70,
+    buttons: null, layoutV: 2,
   };
   const DEFAULT_BUTTONS = [
     { label: '⬆', action: 'space', x: 91, y: 62, size: 76 },
@@ -16,23 +16,53 @@ const Game = (() => {
     { label: 'E', action: 'e', x: 96, y: 24, size: 48 },
     { label: 'Q', action: 'q', x: 88, y: 24, size: 48 },
     { label: 'Esc', action: 'esc', x: 5, y: 16, size: 46 },
-    { label: '◀', action: 'wheelup', x: 42, y: 92, size: 46 },
-    { label: '▶', action: 'wheeldown', x: 52, y: 92, size: 46 },
+    { type: 'strip', vertical: false, reverse: false, step: 28, len: 210, x: 47, y: 92 },
     { label: 'F5', action: 'f5', x: 80, y: 24, size: 48 },
   ];
   const ACTION_OPTS = [['ЛКМ', 'lmb'], ['ПКМ', 'rmb'], ['Ничего', 'none']];
-  const MOUSE = { lmb: BTN.L, rmb: BTN.R, mmb: BTN.M };
+  const MOUSE = { lmb: BTN.L, rmb: BTN.R, mmb: BTN.M, mb4: 8, mb5: 16 };
+  const MEDIA_KEYS = { volup: 0xE9, voldown: 0xEA, mute: 0xE2, playpause: 0xCD, nexttrack: 0xB5, prevtrack: 0xB6, stopmedia: 0xB7 };
+  // Chrome: alpha — ось X телефона, beta — Y, gamma — Z. Знаки для горизонтального положения с angle 90.
+  const GYRO_AXES = ['alpha', 'beta', 'gamma'];
+  const DEFAULT_GYRO_MAP = { yaw: { axis: 'alpha', sign: -1 }, pitch: { axis: 'beta', sign: 1 }, angle: 90 };
+  const JOY_PWM_MS = 100;  // Minecraft читает клавиши раз в 50 мс: импульс короче двух тиков может потеряться
   const WHEEL = { wheelup: 1, wheeldown: -1 };
+  const STRIP_THICKNESS = 46;
   const WASD = { w: 0x1A, a: 0x04, s: 0x16, d: 0x07, sprint: 0xE0 };
-  const TAP_MS = 220, MOVE_TOL = 10, DOUBLE_MS = 300, JOY_DEAD = 0.25, JOY_AXIS = 0.38, JOY_SPRINT = 0.95;
+  const TAP_MS = 220, MOVE_TOL = 10, DOUBLE_MS = 300, JOY_DEAD = 0.25, JOY_AXIS = 0.38, JOY_SPRINT = 0.95, JOY_FULL = 0.9, JOY_MIN = 0.12;
 
   const G = { ...GAME_DEFAULTS, ...S.game };
   if (!Array.isArray(G.buttons)) G.buttons = DEFAULT_BUTTONS.map(b => ({ ...b }));
+  if (S.game && S.game.layoutV !== 2) {
+    // Кнопки ◀ ▶ из прошлой версии заменяет полоса прокрутки
+    G.buttons = G.buttons.filter(b => !(WHEEL[b.action] && (b.label === '◀' || b.label === '▶')));
+    G.buttons.push({ ...DEFAULT_BUTTONS.find(b => b.type === 'strip') });
+    G.layoutV = 2;
+  }
   const persist = () => { S.game = G; save(); };
 
   const root = $('#game'), surface = $('#gSurface'), layer = $('#gButtons'), joyBase = $('#gJoy'), joyNub = $('#gNub');
   let active = false, editing = false, menuMode = false, wentFullscreen = false;
   const down = new Map();  // код клавиши/кнопки мыши -> сколько источников держат
+
+  // Браузер не создаёт click, пока другой палец на экране (держит джойстик) или сразу после быстрого жеста.
+  // Поэтому верхние кнопки слушают само касание, а click отменяем, чтобы он не попал в открывшееся окно.
+  function onTap(el, fn) {
+    let pointer = null;
+    el.addEventListener('pointerdown', e => {
+      e.stopPropagation();
+      el.setPointerCapture(e.pointerId);
+      pointer = e.pointerId;
+    });
+    el.addEventListener('pointerup', e => {
+      if (e.pointerId !== pointer) return;
+      pointer = null;
+      const r = el.getBoundingClientRect();
+      if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) fn();
+    });
+    el.addEventListener('pointercancel', () => { pointer = null; });
+    el.addEventListener('touchend', e => { if (e.cancelable) e.preventDefault(); }, { passive: false });
+  }
 
   // ---------- Нажатия: один код могут держать несколько источников ----------
   function press(kind, code) {
@@ -52,14 +82,15 @@ const Game = (() => {
     if (action === 'none') return;
     if (MOUSE[action]) { press('m', MOUSE[action]); return; }
     if (WHEEL[action]) { link.wheel(WHEEL[action], 0); return; }
+    if (MEDIA_KEYS[action]) { link.cmd(C.MEDIA, MEDIA_KEYS[action] & 255, MEDIA_KEYS[action] >> 8); return; }
     for (const c of Script.parseCombo(action) || []) press('k', c);
   }
   function actionUp(action) {
     if (MOUSE[action]) { release('m', MOUSE[action]); return; }
-    if (action === 'none' || WHEEL[action]) return;
+    if (action === 'none' || WHEEL[action] || MEDIA_KEYS[action]) return;
     for (const c of [...(Script.parseCombo(action) || [])].reverse()) release('k', c);
   }
-  const validAction = a => a === 'none' || !!MOUSE[a] || !!WHEEL[a] || !!Script.parseCombo(a);
+  const validAction = a => a === 'none' || !!MOUSE[a] || !!WHEEL[a] || !!MEDIA_KEYS[a] || !!Script.parseCombo(a);
 
   function releaseAll(notify = true) {
     for (const [id] of down) {
@@ -69,6 +100,8 @@ const Game = (() => {
     down.clear();
     joy.id = look.id = null;
     joy.keys.clear();
+    clearInterval(joy.timer);
+    joy.timer = 0;
     clearTimeout(look.timer);
     look.heldAction = null;
     layer.querySelectorAll('.gb').forEach(b => { b.classList.remove('dn'); b._toggled = false; });
@@ -76,7 +109,8 @@ const Game = (() => {
   }
 
   // ---------- Джойстик ----------
-  const joy = { id: null, cx: 0, cy: 0, keys: new Set() };
+  const joy = { id: null, cx: 0, cy: 0, keys: new Set(), timer: 0,
+    x: { key: 0, duty: 0, acc: 0, neg: 'a', pos: 'd' }, y: { key: 0, duty: 0, acc: 0, neg: 'w', pos: 's' } };
 
   function placeJoyAtRest() {
     joyBase.style.width = joyBase.style.height = G.joySize + 'px';
@@ -99,14 +133,49 @@ const Game = (() => {
     if (mag > 1) { nx /= mag; ny /= mag; }
     paintJoy(nx, ny);
     const live = mag > JOY_DEAD, ux = mag ? nx / Math.min(mag, 1) : 0, uy = mag ? ny / Math.min(mag, 1) : 0;
+    setJoyKey('sprint', G.joySprint && !menuMode && mag >= JOY_SPRINT && uy < -JOY_AXIS);
+    if (G.joyMode === 'smooth') { joySmooth(nx, ny, mag); return; }
     setJoyKey('w', live && uy < -JOY_AXIS);
     setJoyKey('s', live && uy > JOY_AXIS);
     setJoyKey('a', live && ux < -JOY_AXIS);
     setJoyKey('d', live && ux > JOY_AXIS);
-    setJoyKey('sprint', G.joySprint && !menuMode && mag >= JOY_SPRINT && uy < -JOY_AXIS);
+  }
+  // Клавиши бывают только «нажата» или «нет», поэтому скорость задаём долей времени, пока клавиша нажата.
+  // Так же получается любое направление: сильная ось нажата всё время, слабая — частями.
+  function joySmooth(nx, ny, mag) {
+    const m = Math.min(mag, 1), major = Math.max(Math.abs(nx), Math.abs(ny));
+    const power = m > JOY_DEAD ? (m - JOY_DEAD) / (1 - JOY_DEAD) : 0;
+    const set = (axis, v) => {
+      let duty = major ? power * Math.abs(v) / major : 0;
+      if (duty >= JOY_FULL) duty = 1;
+      if (duty < JOY_MIN) duty = 0;
+      const was = axis.duty;
+      axis.duty = duty;
+      axis.key = duty ? (v < 0 ? axis.neg : axis.pos) : null;
+      const other = v < 0 ? axis.pos : axis.neg;
+      setJoyKey(other, false);
+      if (!duty) { setJoyKey(axis.neg, false); setJoyKey(axis.pos, false); axis.acc = 0; return; }
+      if (!was || duty === 1) { axis.acc = 0; setJoyKey(axis.key, true); }  // отклик сразу, без ожидания такта
+    };
+    set(joy.x, nx);
+    set(joy.y, ny);
+    if (!joy.timer) joy.timer = setInterval(joyPulse, JOY_PWM_MS);
+  }
+  function joyPulse() {
+    for (const axis of [joy.x, joy.y]) {
+      if (!axis.duty) continue;
+      if (axis.duty === 1) { setJoyKey(axis.key, true); continue; }
+      axis.acc += axis.duty;
+      const on = axis.acc >= 1;
+      if (on) axis.acc -= 1;
+      setJoyKey(axis.key, on);
+    }
   }
   function joyEnd() {
     joy.id = null;
+    clearInterval(joy.timer);
+    joy.timer = 0;
+    joy.x.duty = joy.y.duty = 0;
     for (const k of [...joy.keys]) setJoyKey(k, false);
     paintJoy(0, 0);
     placeJoyAtRest();
@@ -194,6 +263,7 @@ const Game = (() => {
   function renderButtons() {
     layer.innerHTML = '';
     G.buttons.forEach(cfg => {
+      if (cfg.type === 'strip') { renderStrip(cfg); return; }
       const b = document.createElement('button');
       b.className = 'gb';
       b.textContent = cfg.label;
@@ -205,6 +275,61 @@ const Game = (() => {
       bindButton(b, cfg);
       layer.appendChild(b);
     });
+  }
+
+  function renderStrip(cfg) {
+    const el = document.createElement('div');
+    el.className = 'gs' + (cfg.vertical ? ' v' : '');
+    el.style.left = cfg.x + '%';
+    el.style.top = cfg.y + '%';
+    el.style.width = (cfg.vertical ? STRIP_THICKNESS : cfg.len) + 'px';
+    el.style.height = (cfg.vertical ? cfg.len : STRIP_THICKNESS) + 'px';
+    let pointer = null, last = 0, acc = 0, drag = null;
+    const coord = e => (cfg.vertical ? e.clientY : e.clientX);
+    el.addEventListener('pointerdown', e => {
+      e.preventDefault(); e.stopPropagation();
+      el.setPointerCapture(e.pointerId);
+      if (editing) { drag = { x: e.clientX, y: e.clientY, moved: false }; return; }
+      pointer = e.pointerId; last = coord(e); acc = 0;
+      el.classList.add('dn');
+    });
+    el.addEventListener('pointermove', e => {
+      if (editing) {
+        if (dragWidget(e, drag, cfg)) { el.style.left = cfg.x + '%'; el.style.top = cfg.y + '%'; }
+        return;
+      }
+      if (e.pointerId !== pointer) return;
+      acc += coord(e) - last;
+      last = coord(e);
+      const ticks = Math.trunc(acc / cfg.step);
+      if (!ticks) return;
+      acc -= ticks * cfg.step;
+      // по умолчанию палец влево или вверх — вперёд, это колесо вниз и следующий слот
+      link.wheel(cfg.reverse ? -ticks : ticks, 0);
+      vib(5);
+    });
+    const up = () => {
+      if (editing) {
+        if (drag && !drag.moved) openStripDialog(cfg);
+        else if (drag) persist();
+        drag = null;
+        return;
+      }
+      pointer = null;
+      el.classList.remove('dn');
+    };
+    el.addEventListener('pointerup', up);
+    el.addEventListener('pointercancel', up);
+    layer.appendChild(el);
+  }
+
+  function dragWidget(e, drag, cfg) {
+    if (!drag) return false;
+    if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) > 6) drag.moved = true;
+    if (!drag.moved) return false;
+    cfg.x = Math.max(0, Math.min(100, e.clientX / innerWidth * 100));
+    cfg.y = Math.max(0, Math.min(100, e.clientY / innerHeight * 100));
+    return true;
   }
 
   function bindButton(b, cfg) {
@@ -225,13 +350,7 @@ const Game = (() => {
       actionDown(cfg.action);
     });
     b.addEventListener('pointermove', e => {
-      if (!editing || !drag) return;
-      if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) > 6) drag.moved = true;
-      if (!drag.moved) return;
-      cfg.x = Math.max(0, Math.min(100, e.clientX / innerWidth * 100));
-      cfg.y = Math.max(0, Math.min(100, e.clientY / innerHeight * 100));
-      b.style.left = cfg.x + '%';
-      b.style.top = cfg.y + '%';
+      if (editing && dragWidget(e, drag, cfg)) { b.style.left = cfg.x + '%'; b.style.top = cfg.y + '%'; }
     });
     const up = () => {
       if (editing) {
@@ -258,8 +377,53 @@ const Game = (() => {
     $('#gbSize').value = cfg.size;
     $('#gbToggle').checked = !!cfg.toggle;
     $('#gbErr').textContent = '';
+    paintActionHint();
     btnDlg.showModal();
+    $('#gbLabel').blur();
   }
+  function paintActionHint() {
+    const item = KeyList.describe($('#gbAction').value.trim().toLowerCase());
+    $('#gbHint').textContent = item ? item.desc : '';
+  }
+  $('#gbAction').addEventListener('input', paintActionHint);
+  $('#gbList').addEventListener('click', () => {
+    KeyList.open(item => {
+      $('#gbAction').value = item.action;
+      $('#gbLabel').value = item.short;
+      $('#gbErr').textContent = '';
+      paintActionHint();
+    });
+  });
+
+  // ---------- Настройки полосы прокрутки ----------
+  const stripDlg = $('#gStripDlg');
+  let editingStrip = null;
+  function paintStripLabels() {
+    const vertical = $('#gsVertical').value === '1';
+    $('#gsDirLabel').textContent = vertical ? 'Палец вверх' : 'Палец влево';
+    $('#gsStepValue').textContent = $('#gsStep').value;
+  }
+  function openStripDialog(cfg) {
+    editingStrip = cfg;
+    $('#gsVertical').value = cfg.vertical ? '1' : '0';
+    $('#gsReverse').value = cfg.reverse ? '1' : '0';
+    $('#gsStep').value = cfg.step;
+    $('#gsLen').value = cfg.len;
+    paintStripLabels();
+    stripDlg.showModal();
+  }
+  $('#gsVertical').addEventListener('change', paintStripLabels);
+  $('#gsStep').addEventListener('input', paintStripLabels);
+  $('#gsSave').addEventListener('click', () => {
+    Object.assign(editingStrip, { vertical: $('#gsVertical').value === '1', reverse: $('#gsReverse').value === '1',
+      step: +$('#gsStep').value, len: +$('#gsLen').value });
+    persist(); renderButtons(); stripDlg.close();
+  });
+  $('#gsDelete').addEventListener('click', () => {
+    G.buttons.splice(G.buttons.indexOf(editingStrip), 1);
+    persist(); renderButtons(); stripDlg.close();
+  });
+  $('#gsCancel').addEventListener('click', () => stripDlg.close());
   $('#gbSave').addEventListener('click', () => {
     const action = $('#gbAction').value.trim().toLowerCase();
     if (!validAction(action)) { $('#gbErr').textContent = `Не знаю «${action}». Примеры: space, e, ctrl+z, lmb, rmb, wheelup`; return; }
@@ -280,13 +444,22 @@ const Game = (() => {
     toast(on ? 'Двигай кнопки и джойстик. Тап по кнопке — её настройки' : 'Раскладка сохранена', 1800);
     if (!on) persist();
   }
-  $('#gEdit').addEventListener('click', () => setEditing(!editing));
-  $('#gAdd').addEventListener('click', () => {
+  onTap($('#gEdit'), () => setEditing(!editing));
+  onTap($('#gAdd'), () => $('#gAddDlg').showModal());
+  $('#gAddButton').addEventListener('click', () => {
     const cfg = { label: 'R', action: 'r', x: 50, y: 40, size: 56 };
     G.buttons.push(cfg);
-    persist(); renderButtons(); openButtonDialog(cfg);
+    persist(); renderButtons(); $('#gAddDlg').close(); openButtonDialog(cfg);
   });
-  $('#gReset').addEventListener('click', () => {
+  const addStrip = vertical => {
+    const cfg = { type: 'strip', vertical, reverse: false, step: 28, len: 210, x: 50, y: 40 };
+    G.buttons.push(cfg);
+    persist(); renderButtons(); $('#gAddDlg').close(); openStripDialog(cfg);
+  };
+  $('#gAddH').addEventListener('click', () => addStrip(false));
+  $('#gAddV').addEventListener('click', () => addStrip(true));
+  $('#gAddClose').addEventListener('click', () => $('#gAddDlg').close());
+  onTap($('#gReset'), () => {
     if (!confirm('Вернуть кнопки на места по умолчанию?')) return;
     G.buttons = DEFAULT_BUTTONS.map(b => ({ ...b }));
     G.joyX = GAME_DEFAULTS.joyX; G.joyY = GAME_DEFAULTS.joyY;
@@ -314,7 +487,7 @@ const Game = (() => {
   const gyro = { listening: false, last: 0, gotEvent: false, checkTimer: 0 };
 
   function gyroWanted() {
-    if (!active || editing || menuMode) return false;
+    if (!active || editing || menuMode || cal.on) return false;
     return G.gyro === 1 || (G.gyro === 2 && look.id !== null);
   }
   function onMotion(e) {
@@ -324,13 +497,14 @@ const Game = (() => {
     const dt = gyro.last ? Math.min(now - gyro.last, 50) / 1000 : 0;
     gyro.last = now;
     if (!r || !dt || !gyroWanted()) return;
-    // Оси телефона в горизонтальном положении: beta — поворот влево/вправо, gamma — наклон вверх/вниз,
-    // alpha — наклон как руль. angle 90 и 270 — две стороны горизонтального положения.
-    const flip = (screen.orientation?.angle ?? 90) === 270 ? -1 : 1;
+    const map = G.gyroMap || DEFAULT_GYRO_MAP;
+    // Перевернул телефон другой стороной: оси в плоскости экрана меняют знак, ось сквозь экран — нет
+    const rollAxis = GYRO_AXES.find(a => a !== map.yaw.axis && a !== map.pitch.axis);
+    const flip = (screen.orientation?.angle ?? map.angle) !== map.angle ? -1 : 1;
     const dead = v => (Math.abs(v) < G.gyroDead ? 0 : v);
-    let yaw = -flip * dead(r.beta || 0);
-    if (G.gyroRoll) yaw -= dead(r.alpha || 0);
-    const pitch = flip * dead(r.gamma || 0);
+    let yaw = flip * map.yaw.sign * dead(r[map.yaw.axis] || 0);
+    if (G.gyroRoll) yaw -= dead(r[rollAxis] || 0);
+    const pitch = flip * map.pitch.sign * dead(r[map.pitch.axis] || 0);
     turn(yaw * dt, pitch * dt, G.gyroX * (G.gyroInvX ? -1 : 1), G.gyroY * (G.gyroInvY ? -1 : 1));
   }
   async function gyroStart() {
@@ -355,13 +529,106 @@ const Game = (() => {
     if (active && G.gyro) gyroStart(); else gyroStop();
     $('#gGyro').classList.toggle('on', !!G.gyro);
   }
-  $('#gGyro').addEventListener('click', () => {
+  onTap($('#gGyro'), () => {
     G.gyro = G.gyro ? 0 : 1;
     persist(); syncGyro();
     toast(G.gyro ? 'Гироскоп включён' : 'Гироскоп выключен', 900);
+    if (G.gyro && !G.gyroMap) calStart();
   });
 
-  $('#gMenu').addEventListener('click', () => {
+  // ---------- Настройка гироскопа: человек показывает движения, сайт запоминает оси и знаки ----------
+  const CAL_STEPS = [
+    { id: 'up', icon: '⬆', text: 'Наклони телефон камерой вверх' },
+    { id: 'down', icon: '⬇', text: 'Наклони телефон камерой вниз' },
+    { id: 'left', icon: '⬅', text: 'Поверни телефон налево' },
+    { id: 'right', icon: '➡', text: 'Поверни телефон направо' },
+  ];
+  const CAL_DEG = 30, CAL_NOISE = 3, CAL_STILL = 25, CAL_STILL_MS = 400;
+  const cal = { on: false, step: 0, phase: 'move', sum: {}, got: {}, last: 0, stillSince: 0 };
+  const calDlg = $('#gCalDlg');
+
+  function calPaint() {
+    const s = CAL_STEPS[cal.step];
+    $('#gCalIcon').textContent = cal.phase === 'move' ? s.icon : '↩';
+    $('#gCalText').textContent = cal.phase === 'move' ? s.text : 'Хорошо. Верни телефон обратно и замри';
+    $('#gCalStep').textContent = `Шаг ${cal.step + 1} из ${CAL_STEPS.length}`;
+    $('#gCalBar').style.width = (cal.phase === 'move'
+      ? Math.min(1, calMax() / CAL_DEG) : 1) * 100 + '%';
+  }
+  const calMax = () => Math.max(...GYRO_AXES.map(a => Math.abs(cal.sum[a] || 0)));
+
+  function calMotion(e) {
+    const r = e.rotationRate;
+    const dt = cal.last ? Math.min(e.timeStamp - cal.last, 50) / 1000 : 0;
+    cal.last = e.timeStamp;
+    if (!r || !dt) return;
+    if (cal.phase === 'move') {
+      for (const a of GYRO_AXES) if (Math.abs(r[a] || 0) > CAL_NOISE) cal.sum[a] = (cal.sum[a] || 0) + r[a] * dt;
+      if (calMax() >= CAL_DEG) {
+        cal.got[CAL_STEPS[cal.step].id] = { ...cal.sum };
+        cal.phase = 'back';
+        cal.stillSince = 0;
+        vib(30);
+      }
+    } else {
+      const moving = GYRO_AXES.some(a => Math.abs(r[a] || 0) > CAL_STILL);
+      if (moving) cal.stillSince = 0;
+      else if (!cal.stillSince) cal.stillSince = e.timeStamp;
+      else if (e.timeStamp - cal.stillSince >= CAL_STILL_MS) {
+        cal.step++;
+        cal.phase = 'move';
+        cal.sum = {};
+        if (cal.step === CAL_STEPS.length) { calFinish(); return; }
+      }
+    }
+    calPaint();
+  }
+
+  // Ось движения — та, что сильнее всех разошлась между двумя противоположными шагами
+  function calAxis(a, b) {
+    const diff = GYRO_AXES.map(ax => ({ axis: ax, v: (a[ax] || 0) - (b[ax] || 0) }));
+    const best = diff.reduce((m, d) => (Math.abs(d.v) > Math.abs(m.v) ? d : m));
+    return (a[best.axis] || 0) * (b[best.axis] || 0) < 0 ? best : null;
+  }
+  function calFinish() {
+    calStop();
+    const pitch = calAxis(cal.got.up, cal.got.down), yaw = calAxis(cal.got.left, cal.got.right);
+    if (!pitch || !yaw || pitch.axis === yaw.axis) {
+      $('#gCalIcon').textContent = '⚠';
+      $('#gCalText').textContent = 'Не удалось разобрать движения. Наклоняй и поворачивай только в одну сторону за шаг';
+      $('#gCalBar').style.width = '0';
+      $('#gCalRetry').hidden = false;
+      return;
+    }
+    // Смотреть вверх — мышь вверх (dy < 0), смотреть налево — мышь влево (dx < 0)
+    G.gyroMap = { yaw: { axis: yaw.axis, sign: -Math.sign(yaw.v) }, pitch: { axis: pitch.axis, sign: -Math.sign(pitch.v) },
+      angle: screen.orientation?.angle ?? 90 };
+    G.gyroInvX = G.gyroInvY = false;
+    if (!G.gyro) G.gyro = 1;
+    persist(); syncGyro();
+    calDlg.close();
+    toast('Гироскоп настроен', 1500);
+  }
+  function calStop() {
+    cal.on = false;
+    window.removeEventListener('devicemotion', calMotion);
+  }
+  function calBegin() {
+    Object.assign(cal, { on: true, step: 0, phase: 'move', sum: {}, got: {}, last: 0 });
+    $('#gCalRetry').hidden = true;
+    window.addEventListener('devicemotion', calMotion);
+    calPaint();
+  }
+  function calStart() {
+    if (typeof DeviceMotionEvent === 'undefined') { toast('Гироскоп в этом браузере недоступен'); return; }
+    calBegin();
+    calDlg.showModal();
+  }
+  $('#gCalRetry').addEventListener('click', calBegin);
+  $('#gCalCancel').addEventListener('click', () => { calStop(); calDlg.close(); });
+  $('#gCalStart').addEventListener('click', () => { $('#gSetDlg').close(); calStart(); });
+
+  onTap($('#gMenu'), () => {
     menuMode = !menuMode;
     $('#gMenu').classList.toggle('on', menuMode);
     toast(menuMode ? 'Режим меню: курсор медленный, гироскоп на паузе' : 'Режим игры', 1200);
@@ -386,6 +653,7 @@ const Game = (() => {
     { key: 'gyroRoll', label: 'Наклон как руль тоже поворачивает', check: true },
     { key: 'gyroDead', label: 'Игнорировать дрожание, °/с', min: 0, max: 10, step: 0.5 },
     { title: 'Джойстик' },
+    { key: 'joyMode', label: 'Движение', select: [['Плавное (имитация аналога)', 'smooth'], ['Обычные WASD', 'keys']] },
     { key: 'joyFloat', label: 'Появляется под пальцем', check: true },
     { key: 'joySprint', label: 'Полный наклон вперёд — бег (Ctrl)', check: true },
     { key: 'joySize', label: 'Размер', min: 90, max: 260, step: 5 },
@@ -432,7 +700,8 @@ const Game = (() => {
     }
   }
   function applySettings() { persist(); placeJoyAtRest(); paintJoy(0, 0); syncGyro(); }
-  $('#gSettings').addEventListener('click', () => { renderSettings(); $('#gSetDlg').showModal(); });
+  $('#gButtons').addEventListener('contextmenu', e => e.preventDefault());
+  onTap($('#gSettings'), () => { renderSettings(); $('#gSetDlg').showModal(); });
   $('#gSetClose').addEventListener('click', () => $('#gSetDlg').close());
 
   // ---------- Вход и выход ----------
@@ -465,7 +734,7 @@ const Game = (() => {
   function syncStatus() { $('#gDot').className = link.ch ? 'on' : ''; }
 
   $('#gameBtn').addEventListener('click', enter);
-  $('#gExit').addEventListener('click', exit);
+  onTap($('#gExit'), exit);
   root.addEventListener('contextmenu', e => e.preventDefault());
   document.addEventListener('visibilitychange', () => { if (active && document.visibilityState !== 'visible') releaseAll(); });
 

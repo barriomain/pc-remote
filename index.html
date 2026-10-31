@@ -145,6 +145,23 @@
     flex-direction: column; gap: 14px; text-align: center; padding: 24px; font-size: 18px; }
   #gRotate i { font-style: normal; font-size: 56px; }
   @media (orientation: portrait) { #gRotate { display: flex; } }
+  .gs { position: absolute; transform: translate(-50%, -50%); border-radius: 14px; border: 1.5px solid #ffffff40; pointer-events: auto; touch-action: none;
+    background: repeating-linear-gradient(90deg, #ffffff30 0 2px, #ffffff0a 2px 22px); }
+  .gs.v { background: repeating-linear-gradient(0deg, #ffffff30 0 2px, #ffffff0a 2px 22px); }
+  .gs.dn { border-color: #fff; }
+  #game.editing .gs { border-color: var(--amber); }
+  #gCalDlg { text-align: center; }
+  #gCalIcon { font-size: 44px; line-height: 1.2; }
+  #gCalText { font-size: 17px; margin: 6px 0 10px; }
+  #gCalStep { color: var(--muted); font-size: 12px; }
+  .gcaltrack { height: 8px; border-radius: 4px; background: var(--key); overflow: hidden; margin: 8px 0; }
+  #gCalBar { height: 100%; width: 0; background: var(--green); }
+  #gbHint { color: var(--muted); font-size: 12px; min-height: 16px; }
+  #keySearch { width: 100%; }
+  #keyItems { max-height: calc(90dvh - 190px); overflow-y: auto; margin-top: 8px; }
+  .keyitem { display: flex; gap: 10px; align-items: baseline; width: 100%; text-align: left; background: var(--key); border-radius: 8px; padding: 8px 10px; margin: 5px 0; }
+  .keyitem code { font: 700 13px ui-monospace, Consolas, monospace; flex: none; min-width: 74px; }
+  .keyitem span { color: var(--muted); font-size: 12px; }
   #gSetDlg label span { flex: 1; }
   .gsh { display: block; margin-top: 12px; }
   #gbErr { color: #f87171; font-size: 12px; min-height: 16px; }
@@ -201,6 +218,7 @@
   <label>Ускорение <input type="range" id="sAccel" min="0" max="3" step="0.1"></label>
   <label>Скорость прокрутки <input type="range" id="sScroll" min="0.3" max="3" step="0.1"></label>
   <label>Прокрутка как на телефоне <input type="checkbox" id="sNatural"></label>
+  <label>Полоса прокрутки: обратное направление <input type="checkbox" id="sStripInvert"></label>
   <label>Enter после отправки текста <input type="checkbox" id="sEnter"></label>
   <label>Задержка печати, мс <input type="range" id="sDelay" min="2" max="30" step="1"></label>
   <hr>
@@ -275,6 +293,7 @@
   <p class="note">Клавиши: a–z, 0–9, f1–f12, enter, esc, tab, space, backspace, del, home, end, pgup, pgdn,
     up, down, left, right, ctrl, shift, alt, win. Есть русские команды: пиши, строка, жди, нажми, зажми, отпусти,
     повтор, конец, клик, пкм.</p>
+  <button class="btn" id="helpKeys" style="width:100%;margin-bottom:10px">📋 Все клавиши и что они делают</button>
   <b>Примеры (тап — вставить)</b>
   <div id="examples"></div>
   <div class="bar" style="justify-content:flex-end;margin-top:12px">
@@ -302,16 +321,58 @@
   <h3>Настройки игры</h3>
   <div id="gSetList"></div>
   <div class="bar" style="justify-content:flex-end;margin-top:12px">
+    <button class="btn" id="gCalStart">Настроить гироскоп</button>
     <button class="btn blue" id="gSetClose">Готово</button>
+  </div>
+</dialog>
+<dialog id="gCalDlg">
+  <div id="gCalStep"></div>
+  <div id="gCalIcon"></div>
+  <div id="gCalText"></div>
+  <div class="gcaltrack"><div id="gCalBar"></div></div>
+  <div class="bar" style="justify-content:center;margin-top:12px">
+    <button class="btn" id="gCalCancel">Отмена</button>
+    <button class="btn blue" id="gCalRetry" hidden>Ещё раз</button>
+  </div>
+</dialog>
+<dialog id="gAddDlg">
+  <h3>Добавить</h3>
+  <button class="example" id="gAddButton">Кнопка<span>Клавиша, кнопка мыши, комбинация</span></button>
+  <button class="example" id="gAddH">Полоса прокрутки ↔<span>Колесо мыши: ведёшь пальцем влево и вправо</span></button>
+  <button class="example" id="gAddV">Полоса прокрутки ↕<span>Колесо мыши: ведёшь пальцем вверх и вниз</span></button>
+  <div class="bar" style="justify-content:flex-end;margin-top:12px">
+    <button class="btn" id="gAddClose">Отмена</button>
+  </div>
+</dialog>
+<dialog id="gStripDlg">
+  <h3>Полоса прокрутки</h3>
+  <label>Положение <select id="gsVertical"><option value="0">Горизонтальная</option><option value="1">Вертикальная</option></select></label>
+  <label><span id="gsDirLabel">Палец влево</span> <select id="gsReverse"><option value="0">Вперёд (колесо вниз, след. слот)</option><option value="1">Назад (колесо вверх, пред. слот)</option></select></label>
+  <label><span>Один щелчок колеса — пикселей: <span id="gsStepValue"></span></span> <input type="range" id="gsStep" min="8" max="80" step="1"></label>
+  <label>Длина <input type="range" id="gsLen" min="100" max="420" step="10"></label>
+  <div class="bar" style="justify-content:space-between;margin-top:12px">
+    <button class="btn" id="gsDelete">Удалить</button>
+    <span>
+      <button class="btn" id="gsCancel">Отмена</button>
+      <button class="btn blue" id="gsSave">Сохранить</button>
+    </span>
+  </div>
+</dialog>
+<dialog id="keyDlg">
+  <h3>Все клавиши</h3>
+  <input type="text" id="keySearch" placeholder="Поиск: f5, громкость, колесо…" autocomplete="off" autocapitalize="off" spellcheck="false">
+  <div id="keyItems"></div>
+  <div class="bar" style="justify-content:flex-end;margin-top:12px">
+    <button class="btn" id="keyClose">Закрыть</button>
   </div>
 </dialog>
 <dialog id="gBtnDlg">
   <h3>Кнопка</h3>
   <label>Название <input type="text" id="gbLabel" maxlength="8" autocomplete="off"></label>
   <label>Действие <input type="text" id="gbAction" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+  <div id="gbHint"></div>
   <div id="gbErr"></div>
-  <p class="note">Примеры: <b>space</b>, <b>e</b>, <b>shift</b>, <b>ctrl+z</b>, <b>1</b>, <b>lmb</b> (левая кнопка), <b>rmb</b> (правая),
-    <b>mmb</b> (средняя), <b>wheelup</b>, <b>wheeldown</b> (колесо).</p>
+  <button class="btn" id="gbList" style="width:100%">📋 Список всех клавиш и что они делают</button>
   <label>Размер <input type="range" id="gbSize" min="32" max="130" step="2"></label>
   <label>Фиксация (тап — вкл, тап — выкл) <input type="checkbox" id="gbToggle"></label>
   <div class="bar" style="justify-content:space-between;margin-top:12px">
@@ -336,7 +397,7 @@ const $ = s => document.querySelector(s);
 
 // ---------- Настройки ----------
 const DEFAULTS = { sens: 1.6, accel: 1, scroll: 1, natural: true, sendEnter: false, typeDelay: 6,
-  enMods: 3, enKey: 0x1E, ruMods: 3, ruKey: 0x1F, lang: 0, showKb: true, textMode: 0, inputMode: 'text', codeDraft: '',
+  enMods: 3, enKey: 0x1E, ruMods: 3, ruKey: 0x1F, lang: 0, showKb: true, textMode: 0, inputMode: 'text', codeDraft: '', stripInvert: false,
   led: { mode: 1, color: '#0078ff', bright: 60, speed: 128, flash: true } };
 let S = { ...DEFAULTS };
 try { Object.assign(S, JSON.parse(localStorage.getItem('pcremote') || '{}')); } catch (e) {}
@@ -695,7 +756,7 @@ sc.addEventListener('touchstart', e => { e.preventDefault(); scY = e.targetTouch
 sc.addEventListener('touchmove', e => {
   e.preventDefault();
   const y = e.targetTouches[0].clientY;
-  scrollBy(0, (y - scY) * 1.5); scY = y;
+  scrollBy(0, (y - scY) * 1.5 * (S.stripInvert ? -1 : 1)); scY = y;
 }, { passive: false });
 
 // Кнопки мыши (можно держать)
@@ -1039,6 +1100,16 @@ for (const [title, sub, src] of EXAMPLES) {
 }
 $('#helpBtn').addEventListener('click', () => $('#helpDlg').showModal());
 $('#helpClose').addEventListener('click', () => $('#helpDlg').close());
+$('#helpKeys').addEventListener('click', () => {
+  // В скрипт вставляем то, что язык скриптов понимает; боковых кнопок мыши в нём нет
+  const scriptForm = item => item.script || (Script.parseCombo(item.action) ? item.action : null);
+  KeyList.open(item => {
+    const src = codeEl.value;
+    loadIntoField((src && !src.endsWith('\n') ? src + '\n' : src) + scriptForm(item) + '\n');
+    $('#helpDlg').close();
+    toast('Добавлено в скрипт', 900);
+  }, scriptForm);
+});
 
 function paintLang() { $('#lang').textContent = S.lang ? 'RU' : 'EN'; }
 $('#lang').addEventListener('click', () => {
@@ -1063,7 +1134,7 @@ function fillSelect(sel, opts, val) {
 }
 const bindings = [
   ['#sSens', 'sens', 'range'], ['#sAccel', 'accel', 'range'], ['#sScroll', 'scroll', 'range'], ['#sDelay', 'typeDelay', 'range'],
-  ['#sNatural', 'natural', 'check'], ['#sEnter', 'sendEnter', 'check'],
+  ['#sNatural', 'natural', 'check'], ['#sStripInvert', 'stripInvert', 'check'], ['#sEnter', 'sendEnter', 'check'],
   ['#sTextMode', 'textMode', 'select'], ['#sEnMods', 'enMods', 'select'], ['#sEnKey', 'enKey', 'select'], ['#sRuMods', 'ruMods', 'select'], ['#sRuKey', 'ruKey', 'select'],
 ];
 $('#settingsBtn').addEventListener('click', () => {
@@ -1148,6 +1219,7 @@ if (!navigator.bluetooth) setStatus('', 'Нет Bluetooth в браузере');
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
 </script>
 <script src="script.js"></script>
+<script src="keys.js"></script>
 <script src="game.js"></script>
 </body>
 </html>
