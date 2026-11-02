@@ -21,7 +21,7 @@ const Script = (() => {
   const CMD_ALIASES = {
     пиши: 'type', текст: 'type', строка: 'line', сырой: 'raw', жди: 'wait', пауза: 'wait', нажми: 'press', зажми: 'hold',
     отпусти: 'release', повтор: 'repeat', конец: 'end', клик: 'click', лкм: 'click', пкм: 'rclick', скм: 'mclick',
-    двойной: 'dblclick', двигай: 'move', колесо: 'scroll', медиа: 'media', язык: 'lang',
+    двойной: 'dblclick', двигай: 'move', колесо: 'scroll', медиа: 'media', язык: 'lang', уак: 'uac', подтверди: 'uac',
   };
 
   // Кириллическая буква — та же физическая клавиша, что и в раскладке ЙЦУКЕН
@@ -147,6 +147,13 @@ const Script = (() => {
           const v = { en: 0, ru: 1 }[arg.toLowerCase()];
           if (v === undefined) fail(ln, 'lang: нужно en или ru');
           body.push({ k: 'lang', v });
+          break;
+        }
+        case 'uac': {
+          // UAC появляется не сразу, поэтому ждём, потом Влево (кнопка «Да» — левая) и Enter
+          const ms = arg ? parseWait(arg) : 1500;
+          if (ms === null) fail(ln, 'uac: нужно время ожидания, например uac 2000');
+          body.push({ k: 'wait', ms }, { k: 'combo', codes: [0x50] }, { k: 'wait', ms: 150 }, { k: 'combo', codes: [0x28] });
           break;
         }
         default:

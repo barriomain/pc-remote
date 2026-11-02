@@ -95,7 +95,8 @@
   dialog::backdrop { background: #000a; }
   dialog h3 { margin: 0 0 12px; }
   dialog label { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin: 10px 0; }
-  dialog input[type=range] { width: 50%; }
+  dialog input[type=range] { width: 44%; }
+  .rv { min-width: 34px; text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
   dialog select { background: var(--key); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 4px; }
   dialog .note { color: var(--muted); font-size: 12px; line-height: 1.45; }
   dialog .note b { color: var(--text); }
@@ -229,7 +230,7 @@
   <label>Прокрутка как на телефоне <input type="checkbox" id="sNatural"></label>
   <label>Полоса прокрутки: обратное направление <input type="checkbox" id="sStripInvert"></label>
   <label>Enter после отправки текста <input type="checkbox" id="sEnter"></label>
-  <label>Задержка печати, мс <input type="range" id="sDelay" min="2" max="30" step="1"></label>
+  <label>Задержка печати, мс <input type="range" id="sDelay" min="2" max="20" step="1"></label>
   <hr>
   <b>Гироскоп 🌀</b>
   <p class="note">Телефон как пульт телевизора: наклон вниз и вверх — курсор вниз и вверх, поворот как руль по часовой — вправо, против — влево.</p>
@@ -309,10 +310,11 @@
     <code>scroll -3</code><span>колесо</span>
     <code>media play</code><span>ещё next, prev, stop, volup, voldown, mute</span>
     <code>lang ru</code><span>переключить язык ПК</span>
+    <code>uac</code><span>подтвердить окно Windows «Разрешить?» (права администратора)</span>
   </div>
   <p class="note">Клавиши: a–z, 0–9, f1–f12, enter, esc, tab, space, backspace, del, home, end, pgup, pgdn,
     up, down, left, right, ctrl, shift, alt, win. Есть русские команды: пиши, строка, жди, нажми, зажми, отпусти,
-    повтор, конец, клик, пкм.</p>
+    повтор, конец, клик, пкм, уак.</p>
   <button class="btn" id="helpKeys" style="width:100%;margin-bottom:10px">📋 Все клавиши и что они делают</button>
   <b>Примеры (тап — вставить)</b>
   <div id="examples"></div>
@@ -434,13 +436,14 @@ const BTN = { L: 1, R: 2, M: 4 };
 const $ = s => document.querySelector(s);
 
 // ---------- Настройки ----------
-const DEFAULTS = { sens: 1.6, accel: 1, scroll: 1, natural: true, sendEnter: false, typeDelay: 6,
-  enMods: 3, enKey: 0x1E, ruMods: 3, ruKey: 0x1F, lang: 0, showKb: true, textMode: 0, inputMode: 'text', codeDraft: '', stripInvert: false,
+const DEFAULTS = { sens: 1.6, accel: 1, scroll: 1, natural: true, sendEnter: false, typeDelay: 4,
+  enMods: 3, enKey: 0x1E, ruMods: 3, ruKey: 0x1F, lang: 0, showKb: true, textMode: 0, inputMode: 'text', codeDraft: '', stripInvert: false, v: 0,
   airX: 30, airY: 30, airDead: 1, airMap: null, volKeys: 'pc',
   led: { mode: 1, color: '#0078ff', bright: 60, speed: 128, flash: true } };
 let S = { ...DEFAULTS };
 try { Object.assign(S, JSON.parse(localStorage.getItem('pcremote') || '{}')); } catch (e) {}
 S.led = { ...DEFAULTS.led, ...S.led };
+if (!S.v) { if (S.typeDelay > 4) S.typeDelay = 4; S.v = 1; save(); }  // разовое ускорение печати
 function save() { try { localStorage.setItem('pcremote', JSON.stringify(S)); } catch (e) {} }
 
 function toast(msg, ms = 1800) {
@@ -1056,6 +1059,14 @@ line notepad
 wait 1000
 type Привет! Это написал скрипт.
 `],
+  ['Терминал администратора', 'PowerShell с правами админа и подтверждением UAC', `# PowerShell от имени администратора
+win+r
+wait 600
+type powershell
+ctrl+shift+enter
+# подтвердить окно «Разрешить?»
+uac
+`],
   ['Файл на рабочем столе', 'Через терминал создать note.txt', `# открыть терминал
 win+r
 wait 600
@@ -1172,6 +1183,19 @@ const KEY_OPTS = [...'1234567890'].map(d => [d, charCode(d)]);
 function fillSelect(sel, opts, val) {
   sel.innerHTML = opts.map(([l, v]) => `<option value="${v}"${v === val ? ' selected' : ''}>${l}</option>`).join('');
 }
+// Показывает число рядом с каждым ползунком и обновляет при движении
+function showRangeValues(root) {
+  root.querySelectorAll('input[type=range]').forEach(r => {
+    let o = r.nextElementSibling;
+    if (!(o && o.classList.contains('rv'))) {
+      o = document.createElement('span');
+      o.className = 'rv';
+      r.after(o);
+      r.addEventListener('input', () => { o.textContent = r.value; });
+    }
+    o.textContent = r.value;
+  });
+}
 const bindings = [
   ['#sSens', 'sens', 'range'], ['#sAccel', 'accel', 'range'], ['#sScroll', 'scroll', 'range'], ['#sDelay', 'typeDelay', 'range'],
   ['#sAirX', 'airX', 'range'], ['#sAirY', 'airY', 'range'], ['#sAirDead', 'airDead', 'range'],
@@ -1188,6 +1212,7 @@ $('#settingsBtn').addEventListener('click', () => {
     if (type === 'range') el.value = S[key];
     if (type === 'check') el.checked = S[key];
   }
+  showRangeValues(dlg);
   $('#diag').textContent = diagText();
   dlg.showModal();
 });
@@ -1252,7 +1277,7 @@ $('#ledColor').addEventListener('input', e => { S.led.color = e.target.value; if
 $('#ledBright').addEventListener('input', e => { S.led.bright = +e.target.value; ledChanged(); });
 $('#ledSpeed').addEventListener('input', e => { S.led.speed = +e.target.value; ledChanged(); });
 $('#ledFlash').addEventListener('change', e => { S.led.flash = e.target.checked; ledChanged(); });
-$('#ledBtn').addEventListener('click', () => { paintLed(); $('#ledDlg').showModal(); });
+$('#ledBtn').addEventListener('click', () => { paintLed(); showRangeValues($('#ledDlg')); $('#ledDlg').showModal(); });
 $('#ledClose').addEventListener('click', () => $('#ledDlg').close());
 
 paintLang();
