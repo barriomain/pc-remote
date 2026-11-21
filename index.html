@@ -259,6 +259,11 @@
     <b>долгое нажатие</b> — зафиксирован (фиолетовый, тап чтобы отпустить), <b>двойной тап</b> — просто нажать
     (например, Win откроет Пуск). Можно и держать пальцем, нажимая другие клавиши. Fn — F1–F12, Home/End, PgUp/PgDn.</p>
   <hr>
+  <b>Имя устройства</b>
+  <label>Имя <input type="text" id="sName" maxlength="20" autocomplete="off" spellcheck="false" placeholder="например, Комп в зале"></label>
+  <p class="note">Как ESP видно в списке Bluetooth. После смены ESP перезагрузится и переподключится сама; новое имя появится в списке при следующем выборе устройства. Коротко — до ~12 русских или 24 латинских букв.</p>
+  <div class="bar" style="justify-content:flex-end"><button class="btn blue" id="nameSave">Сохранить имя</button></div>
+  <hr>
   <b>Пароль и доступ 🔒</b>
   <label>Пароль <input type="text" id="sPass" maxlength="16" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="пусто — без пароля"></label>
   <p class="note">Сначала подключаешься без пароля, и ESP запоминает это устройство. Поставишь пароль — новые устройства смогут подключиться, только зная его, а это останется доверенным. Пароль хранится в самой ESP, поэтому для записи ESP должна быть подключена. На новом телефоне просто впиши тот же пароль.</p>
@@ -442,14 +447,14 @@ const SERVICE = '6e400001-b5a3-f393-e0a9-e50e24dc4179';
 const CMD_CHAR = '6e400002-b5a3-f393-e0a9-e50e24dc4179';
 const STATE_CHAR = '6e400003-b5a3-f393-e0a9-e50e24dc4179';
 const C = { MOVE: 1, BTN_DOWN: 2, BTN_UP: 3, WHEEL: 4, CLICK: 5, MEDIA: 6, DELAY: 7, SYNC: 8, KEY_DOWN: 0x10, KEY_UP: 0x11,
-  RELEASE_ALL: 0x12, ABORT: 0x13, TEXT: 0x20, TEXT_BEGIN: 0x21, CONFIG: 0x30, LAYOUT: 0x31, LED: 0x40, HELLO: 0x50, AUTH: 0x51, SET_PASS: 0x52, FORGET: 0x53 };
+  RELEASE_ALL: 0x12, ABORT: 0x13, TEXT: 0x20, TEXT_BEGIN: 0x21, CONFIG: 0x30, LAYOUT: 0x31, LED: 0x40, HELLO: 0x50, AUTH: 0x51, SET_PASS: 0x52, FORGET: 0x53, SET_NAME: 0x54 };
 const BTN = { L: 1, R: 2, M: 4 };
 const $ = s => document.querySelector(s);
 
 // ---------- Настройки ----------
 const DEFAULTS = { sens: 1.6, accel: 1, scroll: 1, natural: true, sendEnter: false, typeDelay: 4,
   enMods: 3, enKey: 0x1E, ruMods: 3, ruKey: 0x1F, lang: 0, showKb: true, textMode: 0, inputMode: 'text', codeDraft: '', stripInvert: false, v: 0,
-  airX: 30, airY: 30, airDead: 1, airMap: null, volKeys: 'pc', pass: '', passHintShown: false,
+  airX: 30, airY: 30, airDead: 1, airMap: null, volKeys: 'pc', pass: '', passHintShown: false, name: '',
   led: { mode: 1, color: '#0078ff', bright: 60, speed: 128, flash: true } };
 let S = { ...DEFAULTS };
 try { Object.assign(S, JSON.parse(localStorage.getItem('pcremote') || '{}')); } catch (e) {}
@@ -501,6 +506,16 @@ const link = {
   authPass(pass) { return this.askAuth(C.AUTH, pass); },
   setPass(pass) { return this.askAuth(C.SET_PASS, pass); },
   forget() { return this.askAuth(C.FORGET, ''); },
+  setName(name) {
+    return new Promise(res => {
+      if (!this.ch) { res(0); return; }
+      const b = new TextEncoder().encode(name || '');
+      const timer = setTimeout(() => { this.onAuth = null; res('nofw'); }, 2000);
+      this.onAuth = r => { clearTimeout(timer); this.onAuth = null; res(r); };
+      this.ch.writeValueWithResponse(Uint8Array.from([C.SET_NAME, b.length, ...b]))
+        .catch(() => { clearTimeout(timer); this.onAuth = null; res(0); });
+    });
+  },
   askAuth(cmd, s) {
     return new Promise(res => {
       if (!this.ch) { res(0); return; }
@@ -1275,6 +1290,7 @@ $('#settingsBtn').addEventListener('click', () => {
   }
   showRangeValues(dlg);
   $('#sPass').value = S.pass || '';
+  $('#sName').value = S.name || (link.dev && link.dev.name) || '';
   $('#diag').textContent = diagText();
   dlg.showModal();
 });
@@ -1309,6 +1325,16 @@ async function applyPass(pass) {
   }
   $('#passSave').addEventListener('click', () => applyPass($('#sPass').value.trim()));
   $('#passClear').addEventListener('click', () => applyPass(''));
+  $('#nameSave').addEventListener('click', async () => {
+    const nm = $('#sName').value.trim();
+    if (!nm) { toast('Впиши имя', 2000); return; }
+    if (new TextEncoder().encode(nm).length > 24) { toast('Имя слишком длинное — сделай короче', 2800); return; }
+    if (!link.ch || !link.authed) { toast('Сначала подключись к ESP', 2500); return; }
+    const r = await link.setName(nm);
+    if (r === 6) { S.name = nm; save(); toast('Имя изменено. ESP перезагрузится и переподключится…', 4000); }
+    else if (r === 'nofw') toast('ESP не приняла имя — нужна новая прошивка ESP', 3500);
+    else toast('Не получилось сменить имя', 2800);
+  });
   $('#passForget').addEventListener('click', async () => {
     if (!link.ch || !link.authed) { toast('Сначала подключись к ESP', 2500); return; }
     if (!confirm('Забыть все доверенные устройства? Они смогут подключиться снова только с паролем.')) return;
