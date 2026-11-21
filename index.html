@@ -259,6 +259,17 @@
     <b>долгое нажатие</b> — зафиксирован (фиолетовый, тап чтобы отпустить), <b>двойной тап</b> — просто нажать
     (например, Win откроет Пуск). Можно и держать пальцем, нажимая другие клавиши. Fn — F1–F12, Home/End, PgUp/PgDn.</p>
   <hr>
+  <b>Пароль и доступ 🔒</b>
+  <label>Пароль <input type="text" id="sPass" maxlength="16" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="пусто — без пароля"></label>
+  <p class="note">Сначала подключаешься без пароля, и ESP запоминает это устройство. Поставишь пароль — новые устройства смогут подключиться, только зная его, а это останется доверенным. Пароль хранится в самой ESP, поэтому для записи ESP должна быть подключена. На новом телефоне просто впиши тот же пароль.</p>
+  <div class="bar" style="justify-content:space-between">
+    <button class="btn" id="passForget">Забыть устройства</button>
+    <span>
+      <button class="btn" id="passClear">Убрать пароль</button>
+      <button class="btn blue" id="passSave">Сохранить</button>
+    </span>
+  </div>
+  <hr>
   <b>Диагностика связи</b>
   <p class="note" id="diag" style="white-space:pre-line"></p>
   <div class="bar" style="justify-content:flex-end;margin-top:12px">
@@ -431,14 +442,14 @@ const SERVICE = '6e400001-b5a3-f393-e0a9-e50e24dc4179';
 const CMD_CHAR = '6e400002-b5a3-f393-e0a9-e50e24dc4179';
 const STATE_CHAR = '6e400003-b5a3-f393-e0a9-e50e24dc4179';
 const C = { MOVE: 1, BTN_DOWN: 2, BTN_UP: 3, WHEEL: 4, CLICK: 5, MEDIA: 6, DELAY: 7, SYNC: 8, KEY_DOWN: 0x10, KEY_UP: 0x11,
-  RELEASE_ALL: 0x12, ABORT: 0x13, TEXT: 0x20, TEXT_BEGIN: 0x21, CONFIG: 0x30, LAYOUT: 0x31, LED: 0x40 };
+  RELEASE_ALL: 0x12, ABORT: 0x13, TEXT: 0x20, TEXT_BEGIN: 0x21, CONFIG: 0x30, LAYOUT: 0x31, LED: 0x40, HELLO: 0x50, AUTH: 0x51, SET_PASS: 0x52, FORGET: 0x53 };
 const BTN = { L: 1, R: 2, M: 4 };
 const $ = s => document.querySelector(s);
 
 // ---------- Настройки ----------
 const DEFAULTS = { sens: 1.6, accel: 1, scroll: 1, natural: true, sendEnter: false, typeDelay: 4,
   enMods: 3, enKey: 0x1E, ruMods: 3, ruKey: 0x1F, lang: 0, showKb: true, textMode: 0, inputMode: 'text', codeDraft: '', stripInvert: false, v: 0,
-  airX: 30, airY: 30, airDead: 1, airMap: null, volKeys: 'pc',
+  airX: 30, airY: 30, airDead: 1, airMap: null, volKeys: 'pc', pass: '', passHintShown: false,
   led: { mode: 1, color: '#0078ff', bright: 60, speed: 128, flash: true } };
 let S = { ...DEFAULTS };
 try { Object.assign(S, JSON.parse(localStorage.getItem('pcremote') || '{}')); } catch (e) {}
@@ -484,6 +495,20 @@ const link = {
     const a = this.acks.get(id);
     if (!a) return;
     this.acks.delete(id); clearTimeout(a.timer); a.res();
+  },
+  // Вход и пароль: ответ ESP приходит уведомлением {0xA6, код}
+  hello(id) { return this.askAuth(C.HELLO, id); },
+  authPass(pass) { return this.askAuth(C.AUTH, pass); },
+  setPass(pass) { return this.askAuth(C.SET_PASS, pass); },
+  forget() { return this.askAuth(C.FORGET, ''); },
+  askAuth(cmd, s) {
+    return new Promise(res => {
+      if (!this.ch) { res(0); return; }
+      const timer = setTimeout(() => { this.onAuth = null; res('nofw'); }, 1500);
+      this.onAuth = r => { clearTimeout(timer); this.onAuth = null; res(r); };
+      const b = new TextEncoder().encode((s || '').slice(0, 16));
+      if (cmd === C.FORGET) this.cmd(cmd); else this.cmd(cmd, b.length, ...b);
+    });
   },
   failAcks(err) {
     for (const a of this.acks.values()) { clearTimeout(a.timer); a.rej(err); }
@@ -572,6 +597,7 @@ const diag = { espUptime: null, resetReason: 0, discReason: 0, discCount: 0, rec
 
 function onState(v) {
   if (v.byteLength === 2 && v.getUint8(0) === 0xA5) { link.ack(v.getUint8(1)); return; }
+  if (v.byteLength === 2 && v.getUint8(0) === 0xA6) { if (link.onAuth) link.onAuth(v.getUint8(1)); return; }
   setLeds(v.getUint8(0));
   if (v.byteLength < 9) return;
   const prevUptime = diag.espUptime;
@@ -617,6 +643,26 @@ function diagText() {
   return lines.concat(diag.log).join('\n');
 }
 
+// Постоянный случайный id этого телефона/браузера — ESP по нему узнаёт доверенные устройства
+function deviceToken() {
+  let d = '';
+  try { d = localStorage.getItem('pcremote_dev') || ''; } catch (e) {}
+  if (!/^[0-9a-f]{12}$/.test(d)) {
+    d = [...crypto.getRandomValues(new Uint8Array(6))].map(x => x.toString(16).padStart(2, '0')).join('');
+    try { localStorage.setItem('pcremote_dev', d); } catch (e) {}
+  }
+  return d;
+}
+// После первого открытого подключения один раз предлагаем поставить пароль
+function suggestPassword() {
+  if (S.passHintShown) return;
+  S.passHintShown = true; save();
+  setTimeout(() => {
+    if (confirm('Поставить пароль, чтобы к ESP не подключались чужие рядом? Это устройство останется доверенным.'))
+      $('#settingsBtn').click();
+  }, 700);
+}
+
 async function setupGatt(isReconnect = false) {
   setStatus('wait', 'Подключение…');
   const server = await link.dev.gatt.connect();
@@ -629,6 +675,20 @@ async function setupGatt(isReconnect = false) {
   } catch (e) { console.warn('notify', e); }
   link.q = []; link.mx = link.my = link.wv = link.wh = 0;
   link.ch = ch;
+  link.authed = false; authFailed = false;
+  let ar = await link.hello(deviceToken());
+  if (ar === 'nofw') ar = await link.hello(deviceToken());  // вдруг первый ответ потерялся при подписке
+  if (ar === 3 && (S.pass || '')) ar = await link.authPass(S.pass);
+  if (ar === 0 || ar === 3) {
+    authFailed = true; manualDisconnect = true;
+    setStatus('', ar === 3 ? 'Нужен пароль' : 'Неверный пароль');
+    link.ch = null;
+    try { link.dev.gatt.disconnect(); } catch (e) {}
+    toast(ar === 3 ? 'ESP не знает это устройство. Открой ⚙ и впиши пароль.' : 'Неверный пароль. Открой ⚙ и впиши правильный.', 5000);
+    throw new Error('нужен пароль');
+  }
+  link.authed = true;
+  if (ar === 4) suggestPassword();
   link.cmd(C.CONFIG, S.enMods, S.enKey, S.ruMods, S.ruKey, S.typeDelay, S.textMode);
   sendLed();
   setStatus('on', link.dev.name || 'Подключено');
@@ -637,7 +697,7 @@ async function setupGatt(isReconnect = false) {
   keepAwake();
 }
 
-let manualDisconnect = false;
+let manualDisconnect = false, authFailed = false;
 async function connect() {
   if (!navigator.bluetooth) {
     alert('Этот браузер не поддерживает Bluetooth.\nAndroid: открой сайт в Chrome.\niPhone: используй браузер Bluefy (App Store).\nСайт должен быть открыт по https://');
@@ -661,11 +721,12 @@ async function connect() {
 }
 
 async function onDisconnected() {
-  link.ch = null; link.busy = false;
+  link.ch = null; link.busy = false; link.authed = false;
   for (const m of Object.values(mods)) { m.st = 0; m.used = false; }  // ESP сама отпускает всё
   paintMods();
   link.failAcks(new Error('Связь с ESP потеряна'));
   Game.linkLost();
+  if (authFailed) { authFailed = false; return; }  // статус уже показан в setupGatt
   if (manualDisconnect) { setStatus('', 'Отключено'); return; }
   // Автопереподключение
   for (let i = 0; i < 20 && !manualDisconnect; i++) {
@@ -1213,6 +1274,7 @@ $('#settingsBtn').addEventListener('click', () => {
     if (type === 'check') el.checked = S[key];
   }
   showRangeValues(dlg);
+  $('#sPass').value = S.pass || '';
   $('#diag').textContent = diagText();
   dlg.showModal();
 });
@@ -1234,6 +1296,25 @@ $('#releaseAll').addEventListener('click', () => {
   link.abort();  // заодно остановит печать длинного текста
   toast('Все клавиши отпущены');
 });
+async function applyPass(pass) {
+    S.pass = pass; save();
+    $('#sPass').value = pass;
+    if (link.ch && link.authed) {
+      const r = await link.setPass(pass);
+      if (r === 2) { toast(pass ? 'Пароль задан и записан в ESP' : 'Пароль убран из ESP', 2800); return; }
+      toast('ESP не приняла пароль — нужна новая прошивка ESP', 3500);
+      return;
+    }
+    toast(pass ? 'Пароль сохранён, отправится при подключении' : 'Пароль очищен', 2800);
+  }
+  $('#passSave').addEventListener('click', () => applyPass($('#sPass').value.trim()));
+  $('#passClear').addEventListener('click', () => applyPass(''));
+  $('#passForget').addEventListener('click', async () => {
+    if (!link.ch || !link.authed) { toast('Сначала подключись к ESP', 2500); return; }
+    if (!confirm('Забыть все доверенные устройства? Они смогут подключиться снова только с паролем.')) return;
+    const r = await link.forget();
+    toast(r === 5 ? 'Доверенные устройства забыты' : 'Не получилось', 2500);
+  });
 
 // ---------- Подсветка ----------
 const LED_MODES = ['Выкл', 'Статус', 'Цвет', 'Дыхание', 'Радуга', 'Мигание', 'Огонь', 'Полиция'];
